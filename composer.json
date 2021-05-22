@@ -1,0 +1,21 @@
+{
+    "name": "withinboredom/distributed-hashmap",
+    "type": "library",
+    "license": "GPL2",
+    "authors": [
+        {
+            "name": "Rob Landers",
+            "email": "landers.robert@gmail.com"
+        }
+    ],
+    "require": {
+        "dapr/php-sdk": "^1.1",
+        "lastguest/murmurhash": "^2.1"
+    },
+    "description": "",
+    "autoload": {
+        "psr-4": {
+            "DistributedHashMap\\": "reference/php"
+        }
+    }
+}
