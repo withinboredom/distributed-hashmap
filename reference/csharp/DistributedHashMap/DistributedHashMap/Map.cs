@@ -21,7 +21,7 @@ namespace DistributedHashMap
         private Header DefaultHeader => new Header
         {
             MaxLoad = _maxLoad,
-            Generation = (int) Math.Ceiling(Math.Log(Math.Max(256, _expectedCapacity)) / Math.Log(2))
+            Generation = (int) Math.Ceiling(Math.Log(Math.Max(256, _expectedCapacity)) / Math.Log(2)) - 7,
         };
 
         private string HeaderKey => "DHMHeader_" + Name;

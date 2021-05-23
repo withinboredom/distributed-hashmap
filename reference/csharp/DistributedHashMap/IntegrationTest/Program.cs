@@ -1,7 +1,5 @@
 ﻿using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Collections.ObjectModel;
 using System.Diagnostics;
 using System.Threading.Tasks;
 using Dapr.Client;
@@ -11,7 +9,7 @@ namespace IntegrationTest
 {
     class Program
     {
-        private const int NumberMessages = 1000;
+        private const int NumberMessages = 10000;
 
         static async Task<int> Main(string[] args)
         {
@@ -27,20 +25,14 @@ namespace IntegrationTest
                         }
                         Console.WriteLine("Starting message write");
                         var stopwatch = new Stopwatch();
-                        var messageObserver = new ObservableCollection<int>();
                         var writtenMessages = 0;
                         var rebuildingStopwatch = new Stopwatch();
-                        messageObserver.CollectionChanged += (sender, eventArgs) =>
-                        {
-                            var every = (int) Math.Round(NumberMessages * 0.01f);
-                            writtenMessages += eventArgs.NewItems?.Count ?? 0;
-                            if (writtenMessages % every == 0) Console.WriteLine($"Wrote {every} messages ({writtenMessages} total).");
-                        };
 
                         Func<int, Map, Task> writer = async (int message, Map map) =>
                         {
                             await map.Put("c# " + message, message);
-                            messageObserver.Add(1);
+                            var every = (int)Math.Round(NumberMessages * 0.1f);
+                            if(++writtenMessages % every == 0) Console.WriteLine($"Written {writtenMessages} messages.");
                         };
                         var messages = new List<Task>();
                         var client = new DaprClientBuilder().Build();
