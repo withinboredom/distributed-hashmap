@@ -2,6 +2,7 @@
   "name": "withinboredom/distributed-hashmap",
   "type": "library",
   "license": "GPL2",
+  "version": "v0.0.1",
   "authors": [
     {
       "name": "Rob Landers",
