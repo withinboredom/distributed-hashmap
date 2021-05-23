@@ -1,73 +1,93 @@
 ﻿using System;
-using System.Collections.Generic;
-using System.Collections.Immutable;
-using System.Linq;
-using System.Text;
 using System.Text.Json;
-using System.Text.Json.Serialization;
+using System.Threading;
 using System.Threading.Tasks;
 using Dapr;
 using Dapr.Client;
-using Dapr.Client.Autogen.Grpc.v1;
 using DistributedHashMap.Internal;
 using StateOptions = Dapr.Client.StateOptions;
 
 namespace DistributedHashMap
 {
-    public class Map: IMap
+    public class Map : IMap
     {
         private readonly string _storeName;
         private readonly DaprClient _client;
+        private readonly long _expectedCapacity;
+        private readonly int _maxLoad;
         private (Header? header, string etag) _headerTuple;
-        private bool _rebuilding = false;
+        private bool _rebuilding;
+
+        private Header DefaultHeader => new Header
+        {
+            MaxLoad = _maxLoad,
+            Generation = (int) Math.Ceiling(Math.Log(Math.Max(256, _expectedCapacity)) / Math.Log(2))
+        };
 
         private string HeaderKey => "DHMHeader_" + Name;
+
+        private static async Task<bool> DoRetry(Func<Task<bool>> task, CancellationToken cancel, int numberRetries = 100)
+        {
+            var taskStatus = await task();
+            if (cancel.IsCancellationRequested || numberRetries < 0)
+            {
+                return false;
+            }
+
+            if (taskStatus) return true;
+
+            return await DoRetry(task, cancel, numberRetries - 1);
+        }
 
         public string Name
         {
             get;
-            private set;
         }
 
-        public Map(string name, string storeName, DaprClient client)
+        public Map(string name, string storeName, DaprClient client, long expectedCapacity = 128, int maxLoad = 12)
         {
             _storeName = storeName;
             _client = client;
+            _expectedCapacity = expectedCapacity;
+            _maxLoad = maxLoad;
             Name = name;
-            _headerTuple = (new Header(), "");
+            _headerTuple = (null, "");
         }
 
-        private async Task<Header> GetHeaderFromStore()
+        private async Task<Header> GetHeaderFromStore(CancellationToken cancellationToken = default)
         {
             try
             {
-                _headerTuple = await _client.GetStateAndETagAsync<Header>(_storeName, HeaderKey, ConsistencyMode.Strong);
+                _headerTuple = await _client.GetStateAndETagAsync<Header>(_storeName, HeaderKey, ConsistencyMode.Strong, cancellationToken: cancellationToken);
             }
             catch (DaprException)
             {
                 _headerTuple = (null, "");
             }
 
-            return _headerTuple.header ?? (_headerTuple.header = new Header());
+            return _headerTuple.header ?? (_headerTuple.header = DefaultHeader);
         }
 
-        private async Task<Header> GetHeaderAndMaybeRebuild()
+        private async Task<Header> GetHeaderAndMaybeRebuild(CancellationToken cancellationToken = default)
         {
-            if (_rebuilding) return _headerTuple.header;
+            if (_rebuilding)
+            {
+                return _headerTuple.header ?? throw new InvalidOperationException("Unable to locate header while rebuilding.");
+            }
 
-            var header = await GetHeaderFromStore();
+            var header = await GetHeaderFromStore(cancellationToken);
             if (!header.Rebuilding)
             {
                 return header;
             }
 
-            await Rebuild();
-            return await GetHeaderFromStore();
+            await Rebuild(cancellationToken);
+            return await GetHeaderFromStore(cancellationToken);
         }
 
         private int GetMapSize()
         {
-            return (int) Math.Pow(2, 7 + _headerTuple.header.Generation);
+            return (int)Math.Pow(2, 7 + _headerTuple.header?.Generation ?? throw new InvalidOperationException("Tried to calculate Map size without reading header first."));
         }
 
         private long GetBucket(string key)
@@ -77,17 +97,17 @@ namespace DistributedHashMap
 
         private string GetBucketKey(string key)
         {
-            return $"DHM_{Name}_{_headerTuple.header.Generation}_{GetBucket(key)}";
+            return $"DHM_{Name}_{_headerTuple.header?.Generation ?? throw new InvalidOperationException("Tried to get bucket key without reading header first.")}_{GetBucket(key)}";
         }
 
-        private async Task<bool> PutRaw(string key, string serializedValue)
+        private async Task<bool> PutRaw(string key, string serializedValue, CancellationToken cancellationToken = default)
         {
-            var header = await GetHeaderAndMaybeRebuild();
+            var header = await GetHeaderAndMaybeRebuild(cancellationToken);
             var bucketKey = GetBucketKey(key);
             (Node? node, string etag) nodeItem;
             try
             {
-                nodeItem = await _client.GetStateAndETagAsync<Node>(_storeName, bucketKey, ConsistencyMode.Strong);
+                nodeItem = await _client.GetStateAndETagAsync<Node>(_storeName, bucketKey, ConsistencyMode.Strong, cancellationToken: cancellationToken);
             }
             catch (DaprException)
             {
@@ -103,28 +123,27 @@ namespace DistributedHashMap
 
             nodeItem.node.Items[key] = serializedValue;
             var saved = await _client.TrySaveStateAsync(_storeName, bucketKey, nodeItem.node, nodeItem.etag,
-                new StateOptions {Consistency = ConsistencyMode.Strong, Concurrency = ConcurrencyMode.FirstWrite});
+                new StateOptions { Consistency = ConsistencyMode.Strong, Concurrency = ConcurrencyMode.FirstWrite }, cancellationToken: cancellationToken);
+
+            if (nodeItem.node.Items.Count > header.MaxLoad) await Rebuild(cancellationToken);
 
             return saved;
         }
 
-        public async Task Put<T>(string key, T value)
+        public Task Put<T>(string key, T value, CancellationToken cancellationToken = default)
         {
-            while (true)
-            {
-                if (!await PutRaw(key, JsonSerializer.Serialize(value))) continue;
-                break;
-            }
+            var serializedValue = JsonSerializer.Serialize(value);
+            return DoRetry(() => PutRaw(key, serializedValue, cancellationToken), cancellationToken);
         }
 
-        public async Task<T> Get<T>(string key)
+        public async Task<T> Get<T>(string key, CancellationToken cancellationToken = default)
         {
-            await GetHeaderAndMaybeRebuild();
+            await GetHeaderAndMaybeRebuild(cancellationToken);
             var bucketKey = GetBucketKey(key);
-            (Node node, string? etag) bucket;
+            (Node? node, string etag) bucket;
             try
             {
-                bucket = await _client.GetStateAndETagAsync<Node>(_storeName, bucketKey, ConsistencyMode.Strong);
+                bucket = await _client.GetStateAndETagAsync<Node>(_storeName, bucketKey, ConsistencyMode.Strong, cancellationToken: cancellationToken);
             }
             catch (DaprException)
             {
@@ -132,18 +151,23 @@ namespace DistributedHashMap
             }
             bucket.node ??= new Node();
 
-            var serializedValue = bucket.node.Items.ContainsKey(key) ? bucket.node.Items[key] : null;
-            return serializedValue == null ? default : JsonSerializer.Deserialize<T>(serializedValue);
+            if (!bucket.node.Items.ContainsKey(key))
+            {
+                return default!;
+            }
+
+            var serializedValue = bucket.node.Items[key];
+            return JsonSerializer.Deserialize<T>(serializedValue)!;
         }
 
-        public async Task<bool> Contains(string key)
+        public async Task<bool> Contains(string key, CancellationToken cancellationToken = default)
         {
-            await GetHeaderAndMaybeRebuild();
+            await GetHeaderAndMaybeRebuild(cancellationToken);
             var bucketKey = GetBucketKey(key);
             (Node node, string? etag) bucket;
             try
             {
-                bucket = await _client.GetStateAndETagAsync<Node>(_storeName, bucketKey, ConsistencyMode.Strong);
+                bucket = await _client.GetStateAndETagAsync<Node>(_storeName, bucketKey, ConsistencyMode.Strong, cancellationToken: cancellationToken);
             }
             catch (DaprException)
             {
@@ -153,14 +177,14 @@ namespace DistributedHashMap
             return bucket.node.Items.ContainsKey(key);
         }
 
-        public async Task Remove(string key)
+        public async Task Remove(string key, CancellationToken cancellationToken = default)
         {
-            await GetHeaderAndMaybeRebuild();
+            await GetHeaderAndMaybeRebuild(cancellationToken);
             var bucketKey = GetBucketKey(key);
             (Node node, string? etag) bucket;
             try
             {
-                bucket = await _client.GetStateAndETagAsync<Node>(_storeName, bucketKey, ConsistencyMode.Strong);
+                bucket = await _client.GetStateAndETagAsync<Node>(_storeName, bucketKey, ConsistencyMode.Strong, cancellationToken: cancellationToken);
             }
             catch (DaprException)
             {
@@ -172,16 +196,22 @@ namespace DistributedHashMap
             bucket.node.Items.Remove(key);
 
             var saved = await _client.TrySaveStateAsync(_storeName, bucketKey, bucket.node, bucket.etag,
-                new StateOptions { Consistency = ConsistencyMode.Strong, Concurrency = ConcurrencyMode.FirstWrite });
+                new StateOptions { Consistency = ConsistencyMode.Strong, Concurrency = ConcurrencyMode.FirstWrite }, cancellationToken: cancellationToken);
+
+            if (!saved)
+            {
+                await Remove(key, cancellationToken);
+            }
         }
 
-        public async Task Rebuild()
+        public async Task Rebuild(CancellationToken cancellationToken = default)
         {
-            var header = _headerTuple.header;
+            IsRebuilding?.Invoke(this, true);
+            var header = _headerTuple.header ?? await GetHeaderFromStore(cancellationToken);
             if (!header.Rebuilding)
             {
                 header.Rebuilding = true;
-                await _client.TrySaveStateAsync(_storeName, "DHMHeader_" + Name, header, _headerTuple.etag);
+                await _client.TrySaveStateAsync(_storeName, HeaderKey, header, _headerTuple.etag, cancellationToken: cancellationToken);
             }
             var nextGenerationHeader = new Header
             {
@@ -190,38 +220,36 @@ namespace DistributedHashMap
                 Rebuilding = header.Rebuilding,
                 Version = header.Version
             };
-            var pointer = (int) (new Random().NextDouble() * GetMapSize());
+            var pointer = (int)(new Random().NextDouble() * GetMapSize());
             var startPoint = pointer;
-            var nextGeneration = new Map(Name, _storeName, _client);
-            nextGeneration._headerTuple = (nextGenerationHeader, _headerTuple.etag);
-            nextGeneration._rebuilding = true;
+            var currentGeneration = header.Generation;
+            var nextGeneration = new Map(Name, _storeName, _client)
+            {
+                _headerTuple = (nextGenerationHeader, _headerTuple.etag), _rebuilding = true
+            };
 
             do
             {
-                var bucket = await _client.GetStateAndETagAsync<Node>(_storeName,
-                    $"DHM_{Name}_{_headerTuple.header.Generation}_{pointer}");
-                if (bucket.value != null)
+                var (value, _) = await _client.GetStateAndETagAsync<Node>(_storeName,
+                    $"DHM_{Name}_{currentGeneration}_{pointer}", cancellationToken: cancellationToken);
+                if (value != null)
                 {
-                    foreach (var kv in bucket.value.Items)
+                    foreach (var (key, serializedValue) in value.Items)
                     {
-                        while (!await nextGeneration.PutRaw(kv.Key, kv.Value)) ;
+                        await DoRetry(() => nextGeneration.PutRaw(key, serializedValue, cancellationToken),
+                            cancellationToken, 0);
                     }
                 }
 
                 pointer = (pointer + 1) % GetMapSize();
             } while (pointer != startPoint);
-             
-            _headerTuple.header.Rebuilding = false;
-            _headerTuple.header.Generation++;
-            await _client.SaveStateAsync(_storeName, "DHMHeader_" + Name, _headerTuple.header);
+
+            header.Rebuilding = false;
+            header.Generation++;
+            await _client.SaveStateAsync(_storeName, HeaderKey, _headerTuple.header, cancellationToken: cancellationToken);
+            IsRebuilding?.Invoke(this, false);
         }
 
-        private IEnumerable<string> AllMetaKeys()
-        {
-            for (var i = 0; i < GetMapSize(); i++)
-            {
-                yield return $"DHM_{Name}_{_headerTuple.header.Generation}_{i}_meta";
-            }
-        }
+        public event EventHandler<bool> IsRebuilding;
     }
 }
