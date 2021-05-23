@@ -16,7 +16,5 @@ namespace DistributedHashMap
         public Task Remove(string key);
 
         public Task Rebuild();
-
-        public Task<int> Size();
     }
 }

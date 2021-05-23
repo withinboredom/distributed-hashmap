@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.Collections.Immutable;
 using System.Linq;
 using System.Text;
 using System.Text.Json;
@@ -17,8 +18,10 @@ namespace DistributedHashMap
     {
         private readonly string _storeName;
         private readonly DaprClient _client;
-        private (Header header, string? etag) _headerTuple;
+        private (Header? header, string etag) _headerTuple;
         private bool _rebuilding = false;
+
+        private string HeaderKey => "DHMHeader_" + Name;
 
         public string Name
         {
@@ -31,22 +34,21 @@ namespace DistributedHashMap
             _storeName = storeName;
             _client = client;
             Name = name;
-            _headerTuple = (new Header(), null);
+            _headerTuple = (new Header(), "");
         }
 
         private async Task<Header> GetHeaderFromStore()
         {
-            string headerKey = "DHMHeader_" + Name;
             try
             {
-                _headerTuple = await _client.GetStateAndETagAsync<Header>(_storeName, headerKey, ConsistencyMode.Strong);
+                _headerTuple = await _client.GetStateAndETagAsync<Header>(_storeName, HeaderKey, ConsistencyMode.Strong);
             }
             catch (DaprException)
             {
-                _headerTuple = (new Header(), null);
+                _headerTuple = (null, "");
             }
 
-            return _headerTuple.header;
+            return _headerTuple.header ?? (_headerTuple.header = new Header());
         }
 
         private async Task<Header> GetHeaderAndMaybeRebuild()
@@ -78,46 +80,39 @@ namespace DistributedHashMap
             return $"DHM_{Name}_{_headerTuple.header.Generation}_{GetBucket(key)}";
         }
 
-        private async Task<bool> PutRaw<T>(string key, T value)
+        private async Task<bool> PutRaw(string key, string serializedValue)
         {
             var header = await GetHeaderAndMaybeRebuild();
             var bucketKey = GetBucketKey(key);
-            (Node node, string? etag) nodeItem;
+            (Node? node, string etag) nodeItem;
             try
             {
                 nodeItem = await _client.GetStateAndETagAsync<Node>(_storeName, bucketKey, ConsistencyMode.Strong);
             }
             catch (DaprException)
             {
-                nodeItem = (new Node(), null);
+                nodeItem = (null, "");
             }
 
-            var serializedValue = JsonSerializer.Serialize(value);
+            nodeItem.node ??= new Node();
 
             if (nodeItem.node.Items.ContainsKey(key) && nodeItem.node.Items[key] == serializedValue)
             {
                 return true;
             }
 
-            nodeItem.node.Items.Add(key, serializedValue);
+            nodeItem.node.Items[key] = serializedValue;
             var saved = await _client.TrySaveStateAsync(_storeName, bucketKey, nodeItem.node, nodeItem.etag,
                 new StateOptions {Consistency = ConsistencyMode.Strong, Concurrency = ConcurrencyMode.FirstWrite});
 
-            await UpdateNodeMeta(bucketKey, new NodeMeta {Size = nodeItem.node.Items.Count});
-
             return saved;
-        }
-
-        private Task UpdateNodeMeta(string bucketKey, NodeMeta meta)
-        {
-            return _client.SaveStateAsync(_storeName, bucketKey + "_meta", meta);
         }
 
         public async Task Put<T>(string key, T value)
         {
             while (true)
             {
-                if (!await PutRaw(key, value)) continue;
+                if (!await PutRaw(key, JsonSerializer.Serialize(value))) continue;
                 break;
             }
         }
@@ -133,8 +128,9 @@ namespace DistributedHashMap
             }
             catch (DaprException)
             {
-                bucket = (new Node(), null);
+                bucket = (null, "");
             }
+            bucket.node ??= new Node();
 
             var serializedValue = bucket.node.Items.ContainsKey(key) ? bucket.node.Items[key] : null;
             return serializedValue == null ? default : JsonSerializer.Deserialize<T>(serializedValue);
@@ -177,8 +173,6 @@ namespace DistributedHashMap
 
             var saved = await _client.TrySaveStateAsync(_storeName, bucketKey, bucket.node, bucket.etag,
                 new StateOptions { Consistency = ConsistencyMode.Strong, Concurrency = ConcurrencyMode.FirstWrite });
-
-            await UpdateNodeMeta(bucketKey, new NodeMeta { Size = bucket.node.Items.Count });
         }
 
         public async Task Rebuild()
@@ -200,14 +194,18 @@ namespace DistributedHashMap
             var startPoint = pointer;
             var nextGeneration = new Map(Name, _storeName, _client);
             nextGeneration._headerTuple = (nextGenerationHeader, _headerTuple.etag);
+            nextGeneration._rebuilding = true;
 
             do
             {
                 var bucket = await _client.GetStateAndETagAsync<Node>(_storeName,
                     $"DHM_{Name}_{_headerTuple.header.Generation}_{pointer}");
-                foreach (var kv in bucket.value.Items)
+                if (bucket.value != null)
                 {
-                    while (!await nextGeneration.PutRaw(kv.Key, kv.Value)) ;
+                    foreach (var kv in bucket.value.Items)
+                    {
+                        while (!await nextGeneration.PutRaw(kv.Key, kv.Value)) ;
+                    }
                 }
 
                 pointer = (pointer + 1) % GetMapSize();
@@ -218,9 +216,12 @@ namespace DistributedHashMap
             await _client.SaveStateAsync(_storeName, "DHMHeader_" + Name, _headerTuple.header);
         }
 
-        public Task<int> Size()
+        private IEnumerable<string> AllMetaKeys()
         {
-            throw new NotImplementedException();
+            for (var i = 0; i < GetMapSize(); i++)
+            {
+                yield return $"DHM_{Name}_{_headerTuple.header.Generation}_{i}_meta";
+            }
         }
     }
 }

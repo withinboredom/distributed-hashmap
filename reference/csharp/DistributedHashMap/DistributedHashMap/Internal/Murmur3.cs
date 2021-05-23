@@ -8,7 +8,7 @@ namespace DistributedHashMap.Internal
     /// I couldn't find a murmur3 hash implementation that was correct for dynamic languages, so this is an
     /// implementation that doesn't cast to int, but keeps the 32 bit result as a long.
     /// </summary>
-    internal class Murmur3
+    public class Murmur3
     {
         public static long ComputeHash(string value, int seed = 0)
         {

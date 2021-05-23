@@ -1,0 +1,8 @@
+{
+  "profiles": {
+    "IntegrationTest": {
+      "commandName": "Project",
+      "commandLineArgs": "write"
+    }
+  }
+}
