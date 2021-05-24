@@ -26,6 +26,13 @@ namespace DistributedHashMap
 
         private string HeaderKey => "DHMHeader_" + Name;
 
+        /// <summary>
+        /// Retries a block of code
+        /// </summary>
+        /// <param name="task"></param>
+        /// <param name="cancel"></param>
+        /// <param name="numberRetries"></param>
+        /// <returns></returns>
         private static async Task<bool> DoRetry(Func<Task<bool>> task, CancellationToken cancel, int numberRetries = 100)
         {
             var taskStatus = await task();
@@ -44,6 +51,14 @@ namespace DistributedHashMap
             get;
         }
 
+        /// <summary>
+        /// Create a reference to a hashmap.
+        /// </summary>
+        /// <param name="name">The name of the hashmap</param>
+        /// <param name="storeName">The state store to use</param>
+        /// <param name="client">The dapr client to use</param>
+        /// <param name="expectedCapacity">The expected initial capacity</param>
+        /// <param name="maxLoad">The maximum number of keys to store in a single state key</param>
         public Map(string name, string storeName, DaprClient client, long expectedCapacity = 128, int maxLoad = 12)
         {
             _storeName = storeName;
@@ -54,6 +69,11 @@ namespace DistributedHashMap
             _headerTuple = (null, "");
         }
 
+        /// <summary>
+        /// Retrieve the header from the store and store it in the store if it doesn't yet exist
+        /// </summary>
+        /// <param name="cancellationToken"></param>
+        /// <returns>The header</returns>
         private async Task<Header> GetHeaderFromStore(CancellationToken cancellationToken = default)
         {
             try
@@ -75,6 +95,11 @@ namespace DistributedHashMap
             return _headerTuple.header;
         }
 
+        /// <summary>
+        /// Retrieve the current header and maybe participate in a rebuild if necessary
+        /// </summary>
+        /// <param name="cancellationToken"></param>
+        /// <returns>The current header</returns>
         private async Task<Header> GetHeaderAndMaybeRebuild(CancellationToken cancellationToken = default)
         {
             if (_rebuilding)
@@ -92,21 +117,42 @@ namespace DistributedHashMap
             return await GetHeaderFromStore(cancellationToken);
         }
 
+        /// <summary>
+        /// Get the current map size (in buckets)
+        /// </summary>
+        /// <returns></returns>
         private int GetMapSize()
         {
             return (int)Math.Pow(2, 7 + _headerTuple.header?.Generation ?? throw new InvalidOperationException("Tried to calculate Map size without reading header first."));
         }
 
+        /// <summary>
+        /// Returns a bucket number given a key
+        /// </summary>
+        /// <param name="key"></param>
+        /// <returns></returns>
         private long GetBucket(string key)
         {
             return Murmur3.ComputeHash(key) % GetMapSize();
         }
 
+        /// <summary>
+        /// Returns the bucket key for reading from the state store
+        /// </summary>
+        /// <param name="key"></param>
+        /// <returns></returns>
         private string GetBucketKey(string key)
         {
             return $"DHM_{Name}_{_headerTuple.header?.Generation ?? throw new InvalidOperationException("Tried to get bucket key without reading header first.")}_{GetBucket(key)}";
         }
 
+        /// <summary>
+        /// Puts a value in the map
+        /// </summary>
+        /// <param name="key"></param>
+        /// <param name="serializedValue"></param>
+        /// <param name="cancellationToken"></param>
+        /// <returns></returns>
         private async Task<bool> PutRaw(string key, string serializedValue, CancellationToken cancellationToken = default)
         {
             var header = await GetHeaderAndMaybeRebuild(cancellationToken);
@@ -138,12 +184,27 @@ namespace DistributedHashMap
             return saved;
         }
 
+        /// <summary>
+        /// Put a value into the hashmap
+        /// </summary>
+        /// <typeparam name="T">The type to put</typeparam>
+        /// <param name="key">The item's key</param>
+        /// <param name="value">The item</param>
+        /// <param name="cancel">A cancellation token</param>
+        /// <returns></returns>
         public Task Put<T>(string key, T value, CancellationToken cancellationToken = default)
         {
             var serializedValue = JsonSerializer.Serialize(value, _client.JsonSerializerOptions);
             return DoRetry(() => PutRaw(key, serializedValue, cancellationToken), cancellationToken);
         }
 
+        /// <summary>
+        /// Get a value from the hashmap
+        /// </summary>
+        /// <typeparam name="T">The type to get</typeparam>
+        /// <param name="key">The key to get</param>
+        /// <param name="cancellationToken">A cancellation token</param>
+        /// <returns>The value for the given key</returns>
         public async Task<T> Get<T>(string key, CancellationToken cancellationToken = default)
         {
             await GetHeaderAndMaybeRebuild(cancellationToken);
@@ -168,6 +229,12 @@ namespace DistributedHashMap
             return JsonSerializer.Deserialize<T>(serializedValue, _client.JsonSerializerOptions)!;
         }
 
+        /// <summary>
+        /// Whether the hashmap contains a given key
+        /// </summary>
+        /// <param name="key">The key to check for</param>
+        /// <param name="cancellationToken">A cancellation token</param>
+        /// <returns>True if there is a key</returns>
         public async Task<bool> Contains(string key, CancellationToken cancellationToken = default)
         {
             await GetHeaderAndMaybeRebuild(cancellationToken);
@@ -185,6 +252,12 @@ namespace DistributedHashMap
             return bucket.node.Items.ContainsKey(key);
         }
 
+        /// <summary>
+        /// Removes a key from the hashmap
+        /// </summary>
+        /// <param name="key">The key to remove</param>
+        /// <param name="cancellationToken">A cancellation token</param>
+        /// <returns></returns>
         public async Task Remove(string key, CancellationToken cancellationToken = default)
         {
             await GetHeaderAndMaybeRebuild(cancellationToken);
@@ -213,6 +286,13 @@ namespace DistributedHashMap
             }
         }
 
+        /// <summary>
+        /// Rebuild the hashmap and increase it's potential size by incrementing the generation. Calling this will
+        /// cause all writers/readers to participate in a rebuild. Use with caution, will be called automatically as
+        /// needed.
+        /// </summary>
+        /// <param name="cancellationToken">A cancellation token</param>
+        /// <returns></returns>
         public async Task Rebuild(CancellationToken cancellationToken = default)
         {
             IsRebuilding?.Invoke(this, true);
