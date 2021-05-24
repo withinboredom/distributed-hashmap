@@ -99,8 +99,8 @@ switch ($argv[1]) {
             $result = $map->get('php '.$i, 'int');
             if($i !== $result) {
                 echo("failed (received $result and expected $i).\n");
+                exit(1);
             }
-            exit(1);
         }
         echo "verified!\n";
 
