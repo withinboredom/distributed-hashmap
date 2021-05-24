@@ -18,7 +18,7 @@ namespace Unit_Tests
 
         public StorageTests()
         {
-            _client = new DaprClientBuilder().Build();
+            _client = new DaprClientBuilder().UseGrpcEndpoint("http://localhost:50001").Build();
         }
 
         [Fact]
