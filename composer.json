@@ -12,9 +12,7 @@
   "require": {
     "php": ">=8.0",
     "dapr/php-sdk": "dev-main",
-    "lastguest/murmurhash": "^2.1",
-    "ext-pcntl": "*",
-    "ext-posix": "*"
+    "lastguest/murmurhash": "^2.1"
   },
   "description": "A distributed hashmap for Dapr state stores.",
   "autoload": {
@@ -28,7 +26,8 @@
     }
   },
   "require-dev": {
-    "phpunit/phpunit": "^9.5"
+    "phpunit/phpunit": "^9.5",
+    "ext-pcntl": "*"
   },
   "scripts": {
     "test": "phpunit tests/php"
