@@ -14,7 +14,7 @@ services:
     build:
       dockerfile: images/csharp.Dockerfile
       context: .
-    command: write test
+    command: ["write","test"]
     network_mode: service:csharp-daprd
     depends_on:
       - csharp-daprd
@@ -23,7 +23,7 @@ services:
     build:
       dockerfile: images/csharp.Dockerfile
       context: .
-    command: read test
+    command: ["read","test"]
     network_mode: service:csharp-daprd
     depends_on:
       - csharp-daprd
@@ -39,7 +39,7 @@ services:
     build:
       dockerfile: images/php.Dockerfile
       context: .
-    command: write test
+    command: ["write","test"]
     network_mode: service:php-daprd
     depends_on:
       - php-daprd
@@ -48,7 +48,7 @@ services:
     build:
       dockerfile: images/php.Dockerfile
       context: .
-    command: read test
+    command: ["read","test"]
     network_mode: service:php-daprd
     depends_on:
       - php-daprd
