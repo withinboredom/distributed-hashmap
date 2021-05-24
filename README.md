@@ -8,7 +8,7 @@ regular hashmap except instead of using memory, it uses Dapr State.
 ## Implementations:
 
 - PHP [source](reference/php) [Packagist](https://packagist.org/packages/withinboredom/distributed-hashmap)
-- C# [source](reference/csharp) [Nuget]()
+- C# [source](reference/csharp) [Nuget](https://www.nuget.org/packages/DistributedHashMap/0.0.1)
 
 ## Limitations
 
