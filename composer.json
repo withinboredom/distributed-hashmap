@@ -11,7 +11,9 @@
   ],
   "require": {
     "dapr/php-sdk": "^1.1",
-    "lastguest/murmurhash": "^2.1"
+    "lastguest/murmurhash": "^2.1",
+    "ext-pcntl": "*",
+    "ext-posix": "*"
   },
   "description": "",
   "autoload": {

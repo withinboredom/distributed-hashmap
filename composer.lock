@@ -4,7 +4,7 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "eca5e65aa4b39fe6436cf4285012246e",
+    "content-hash": "675d57c18e88039ca6e9c4aff325c625",
     "packages": [
         {
             "name": "dapr/php-sdk",
@@ -3344,7 +3344,9 @@
     "stability-flags": [],
     "prefer-stable": false,
     "prefer-lowest": false,
-    "platform": [],
+    "platform": {
+        "ext-pcntl": "*"
+    },
     "platform-dev": [],
     "plugin-api-version": "2.0.0"
 }

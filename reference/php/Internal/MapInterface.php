@@ -8,5 +8,4 @@ interface MapInterface {
     public function contains(string $key): bool;
     public function remove(string $key): void;
     public function rebuild(): void;
-    public function size(): int;
 }

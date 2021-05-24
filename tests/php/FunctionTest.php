@@ -40,12 +40,14 @@ class FunctionTest extends TestCase
     public function testCountAndResize(): void
     {
         $map = $this->getMap();
-        for($i = 0; $i < 500; $i++) {
-            $map->put('key.' . $i, $i);
+        for ($i = 0; $i < 500; $i++) {
+            $map->put('key.'.$i, $i);
             $this->assertTrue($map->contains('key.'.$i));
         }
-        $this->assertSame(500, $map->size());
         $map->rebuild();
-        $this->assertSame(500, $map->size());
+        for ($i = 0; $i < 500; $i++) {
+            $result = $map->get('key.'.$i, 'int');
+            $this->assertSame($i, $result);
+        }
     }
 }

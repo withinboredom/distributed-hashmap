@@ -6,7 +6,9 @@ use Dapr\Deserialization\Attributes\ArrayOf;
 
 class Node
 {
-    public function __construct(#[ArrayOf('string')] public array $items = [])
-    {
+    public function __construct(
+        #[ArrayOf('string')] public array $items = [],
+        #[ArrayOf(Trigger::class)] public array $triggers = []
+    ) {
     }
 }

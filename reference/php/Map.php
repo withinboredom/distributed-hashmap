@@ -11,7 +11,6 @@ use Dapr\State\StateItem;
 use DistributedHashMap\Internal\Header;
 use DistributedHashMap\Internal\MapInterface;
 use DistributedHashMap\Internal\Node;
-use DistributedHashMap\Internal\NodeMeta;
 use lastguest\Murmur;
 
 /**
@@ -25,62 +24,28 @@ class Map implements MapInterface, \ArrayAccess
      */
     private StateItem $header;
 
+    private function getDefaultHeader() {
+        return new Header(generation: ceil(log(max(256, $this->expectedCapacity)) / log(2)) - 7, maxLoad: $this->maxLoad);
+    }
+
     /**
      * Map constructor.
      *
      * @param string $name The name of the hash map
      * @param IManageState $stateManager The state manager
-     * @param string $store_name The state store name
+     * @param string $storeName The state store name
      * @param ISerializer $serializer The serializer
      * @param IDeserializer $deserializer The deserializer
      */
     public function __construct(
         private string $name,
         private IManageState $stateManager,
-        private string $store_name,
+        private string $storeName,
         private ISerializer $serializer,
-        private IDeserializer $deserializer
+        private IDeserializer $deserializer,
+        private int $expectedCapacity = 256,
+        private int $maxLoad = 12
     ) {
-    }
-
-    /**
-     * Get the number of items in the hash map
-     *
-     * @return int The number of items in the map
-     */
-    public function size(): int
-    {
-        // todo: this is terrible performance
-        $size = 0;
-        foreach ($this->iterateMetaKeys() as $metaKey) {
-            $bucket = $this->stateManager->load_state(
-                $this->store_name,
-                $metaKey,
-                new NodeMeta(),
-                consistency: new StrongFirstWrite()
-            );
-            if ( ! $bucket->value instanceof NodeMeta) {
-                $bucket->value = $this->deserializer->from_json(NodeMeta::class, $bucket->value);
-            }
-            $size += $bucket->value->size;
-        }
-
-        return $size;
-    }
-
-    /**
-     * Iterate over all meta keys
-     *
-     * @return \Generator
-     */
-    private function iterateMetaKeys(): \Generator
-    {
-        $this->getHeaderAndMaybeRebuild();
-        $prefix = 'DHM_'.$this->name.'_'.$this->getHeaderFromHeader()->generation.'_';
-        $size   = $this->getMapSize();
-        for ($i = 0; $i < $size; $i++) {
-            yield $prefix.$i.'_meta';
-        }
     }
 
     /**
@@ -123,9 +88,9 @@ class Map implements MapInterface, \ArrayAccess
     {
         $headerKey    = 'DHMHeader_'.$this->name;
         $this->header = $this->stateManager->load_state(
-            $this->store_name,
+            $this->storeName,
             $headerKey,
-            default_value: new Header(),
+            default_value: $this->getDefaultHeader(),
             consistency: new StrongFirstWrite()
         );
         if ( ! $this->header->value instanceof Header) {
@@ -143,7 +108,7 @@ class Map implements MapInterface, \ArrayAccess
         $header = $this->getHeaderFromHeader();
         if ( ! $header->rebuilding) {
             $header->rebuilding = true;
-            $this->stateManager->save_state($this->store_name, $this->header);
+            $this->stateManager->save_state($this->storeName, $this->header);
         }
         $nextGenerationHeader = clone $header;
         $nextGenerationHeader->generation++;
@@ -151,16 +116,18 @@ class Map implements MapInterface, \ArrayAccess
         $nextGeneration                = new self(
             $this->name,
             $this->stateManager,
-            $this->store_name,
+            $this->storeName,
             $this->serializer,
-            $this->deserializer
+            $this->deserializer,
+            $this->expectedCapacity,
+            $this->maxLoad
         );
         $nextGeneration->header        = clone $this->header;
         $nextGeneration->header->value = $nextGenerationHeader;
 
         do {
             $bucket = $this->stateManager->load_state(
-                $this->store_name,
+                $this->storeName,
                 'DHM_'.$this->name.'_'.$this->getHeaderFromHeader()->generation.'_'.$pointer,
                 default_value: new Node(),
                 consistency: new StrongFirstWrite()
@@ -182,7 +149,7 @@ class Map implements MapInterface, \ArrayAccess
         $header->rebuilding = false;
         $header->generation++;
         $this->header->value = $this->serializer->as_json($header);
-        $this->stateManager->save_state($this->store_name, $this->header);
+        $this->stateManager->save_state($this->storeName, $this->header);
         unset($this->header);
     }
 
@@ -223,7 +190,7 @@ class Map implements MapInterface, \ArrayAccess
         $header     = $this->getHeaderAndMaybeRebuild();
         $bucket_key = $this->getBucketKey($key);
         $nodeItem   = $this->stateManager->load_state(
-            $this->store_name,
+            $this->storeName,
             $bucket_key,
             default_value: new Node(),
             consistency: new StrongFirstWrite()
@@ -234,9 +201,8 @@ class Map implements MapInterface, \ArrayAccess
         }
         $node->items[$key] = $value;
         $nodeItem->value   = $this->serializer->as_json($node);
-        $this->stateManager->save_state($this->store_name, $nodeItem);
+        $this->stateManager->save_state($this->storeName, $nodeItem);
 
-        $this->updateNodeMeta($bucket_key, new NodeMeta(count($node->items)));
         if (count($node->items) > $header->maxLoad) {
             $this->rebuild();
         }
@@ -267,18 +233,6 @@ class Map implements MapInterface, \ArrayAccess
     }
 
     /**
-     * Update node metadata
-     *
-     * @param string $key The state key
-     * @param NodeMeta $meta The new node metadata
-     */
-    private function updateNodeMeta(string $key, NodeMeta $meta): void
-    {
-        $key = $key.'_meta';
-        $this->stateManager->save_state($this->store_name, new StateItem($key, $this->serializer->as_json($meta)));
-    }
-
-    /**
      * @inheritDoc
      */
     public function offsetExists($offset): bool
@@ -297,7 +251,7 @@ class Map implements MapInterface, \ArrayAccess
     {
         $this->getHeaderAndMaybeRebuild();
         $bucket = $this->stateManager->load_state(
-            $this->store_name,
+            $this->storeName,
             $this->getBucketKey($key),
             new Node(),
             consistency: new StrongFirstWrite()
@@ -328,7 +282,7 @@ class Map implements MapInterface, \ArrayAccess
         $this->getHeaderAndMaybeRebuild();
         $bucket_key = $this->getBucketKey($key);
         $bucket     = $this->stateManager->load_state(
-            $this->store_name,
+            $this->storeName,
             $bucket_key,
             new Node(),
             consistency: new StrongFirstWrite()
@@ -379,7 +333,7 @@ class Map implements MapInterface, \ArrayAccess
         $this->getHeaderAndMaybeRebuild();
         $bucket_key = $this->getBucketKey($key);
         $bucket     = $this->stateManager->load_state(
-            $this->store_name,
+            $this->storeName,
             $bucket_key,
             default_value: new Node(),
             consistency: new StrongFirstWrite()
@@ -387,8 +341,6 @@ class Map implements MapInterface, \ArrayAccess
         $node       = $this->getNodeFromItem($bucket);
         unset($node->items[$key]);
         $bucket->value = $this->serializer->as_json($node);
-        $this->stateManager->save_state($this->store_name, $bucket);
-
-        $this->updateNodeMeta($bucket_key, new NodeMeta(count($node->items)));
+        $this->stateManager->save_state($this->storeName, $bucket);
     }
 }
