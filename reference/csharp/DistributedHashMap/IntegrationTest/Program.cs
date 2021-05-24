@@ -42,7 +42,7 @@ namespace IntegrationTest
                             MaxDegreeOfParallelism = 30
                         }, (int i, ParallelLoopState state) =>
                         {
-                            var map = new Map("c#" + seed, "statestore", client, expectedCapacity: NumberMessages);
+                            var map = new Map("c#" + seed, "statestore", client);
                             map.IsRebuilding += (sender, b) =>
                             {
                                 if (b && !rebuildingStopwatch.IsRunning)
@@ -60,7 +60,7 @@ namespace IntegrationTest
                         stopwatch.Stop();
 
                         Console.Write("Verifying... ");
-                        var map = new Map("c#" + seed, "statestore", client, expectedCapacity: NumberMessages);
+                        var map = new Map("c#" + seed, "statestore", client);
                         for (var i = 0; i < NumberMessages; i++)
                         {
                             var verification = await map.Get<int>("c# " + i);
