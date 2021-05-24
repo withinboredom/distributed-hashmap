@@ -41,6 +41,53 @@ function fork_and_run($message, $serializer, $deserializer, $stateManager, $seed
 }
 
 switch ($argv[1]) {
+    case 'read':
+        $seed = uniqid();
+        if (isset($argv[2])) {
+            $seed = $argv[2];
+        }
+        $app = App::create();
+        set_error_handler(
+            function ($err_no, $err_str, $err_file, $err_line) {
+                echo "ERROR: $err_str in $err_file:$err_line";
+                exit(1);
+            }
+        );
+        [$serializer, $deserializer, $stateManager] = $app->run(
+            fn(ISerializer $serializer, IDeserializer $deserializer, StateManager $stateManager) => [
+                $serializer,
+                $deserializer,
+                $stateManager,
+            ]
+        );
+
+        echo "Starting verification\n";
+
+        $langs = ['php', 'c#'];
+
+        foreach ($langs as $lang) {
+            $map = new Map(
+                $lang.$seed,
+                $stateManager,
+                'statestore',
+                $serializer,
+                $deserializer,
+            //expectedCapacity: NUMBER_MESSAGES
+            );
+            echo "Verifying $lang: ";
+            $start_time = microtime(true);
+            for ($i = 0; $i < NUMBER_MESSAGES; $i++) {
+                $verification = $map->get("$lang $i", 'int');
+                if ($i !== $verification) {
+                    echo "Failed read verification for $lang and got $verification instead of $i\n";
+                    exit(1);
+                }
+            }
+            $elapsed_seconds = microtime(true) - $start_time;
+            echo "Done in $elapsed_seconds seconds\n";
+        }
+
+        break;
     case 'write':
         $seed = uniqid();
         if (isset($argv[2])) {
@@ -74,7 +121,7 @@ switch ($argv[1]) {
             $pids[] = fork_and_run($i, $serializer, $deserializer, $stateManager, $seed);
             waiting:
             if (count($pids) >= $number_threads) {
-                $wait       = array_shift($pids);
+                $wait = array_shift($pids);
                 pcntl_waitpid($wait, $status, WUNTRACED);
                 if (pcntl_wifexited($status)) {
                     if (pcntl_wexitstatus($status) !== 0) {

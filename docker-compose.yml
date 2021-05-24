@@ -10,11 +10,20 @@ services:
     depends_on:
       - redis
   csharp-writer:
-    image: withinboredom/dhm-csharp-integration:latest
+    image: withinboredom/dhm-csharp-integration:writer
     build:
       dockerfile: images/csharp.Dockerfile
       context: .
     command: write test
+    network_mode: service:csharp-daprd
+    depends_on:
+      - csharp-daprd
+  csharp-reader:
+    image: withinboredom/dhm-csharp-integration:reader
+    build:
+      dockerfile: images/csharp.Dockerfile
+      context: .
+    command: read test
     network_mode: service:csharp-daprd
     depends_on:
       - csharp-daprd
@@ -26,11 +35,20 @@ services:
     depends_on:
       - redis
   php-writer:
-    image: withinboredom/dhm-php-integration:latest
+    image: withinboredom/dhm-php-integration:writer
     build:
       dockerfile: images/php.Dockerfile
       context: .
     command: write test
+    network_mode: service:php-daprd
+    depends_on:
+      - php-daprd
+  php-reader:
+    image: withinboredom/dhm-php-integration:reader
+    build:
+      dockerfile: images/php.Dockerfile
+      context: .
+    command: read test
     network_mode: service:php-daprd
     depends_on:
       - php-daprd
