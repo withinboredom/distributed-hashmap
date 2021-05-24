@@ -10,7 +10,7 @@ namespace IntegrationTest
     {
         private const int NumberMessages = 2000;
 
-        static int Main(string[] args)
+        static async Task<int> Main(string[] args)
         {
             if (args.Length > 0)
             {
@@ -58,6 +58,19 @@ namespace IntegrationTest
                             writer(i, map).Wait();
                         });
                         stopwatch.Stop();
+
+                        Console.Write("Verifying... ");
+                        var map = new Map("c# " + seed, "statestore", client);
+                        for (var i = 0; i < NumberMessages; i++)
+                        {
+                            var verification = await map.Get<int>("c# " + i);
+                            if (verification != i)
+                            {
+                                Console.WriteLine($"failed. (got {verification} and expecting {i})");
+                                return 1;
+                            }
+                        }
+                        Console.WriteLine("verified!");
                         
                         Console.WriteLine($"{writtenMessages}/{NumberMessages} messages written in {stopwatch.Elapsed.TotalSeconds:N4} seconds");
                         return 0;
