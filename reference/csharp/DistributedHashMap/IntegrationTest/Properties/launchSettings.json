@@ -3,6 +3,9 @@
     "IntegrationTest": {
       "commandName": "Project",
       "commandLineArgs": "write"
+    },
+    "Docker": {
+      "commandName": "Docker"
     }
   }
 }
