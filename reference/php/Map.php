@@ -191,7 +191,11 @@ class Map implements MapInterface, \ArrayAccess
         $header->rebuilding = false;
         $header->generation++;
         $this->header->value = $header;
-        $this->stateManager->save_state($this->storeName, $this->header);
+        try {
+            $this->stateManager->save_state($this->storeName, $this->header);
+        } catch (DaprException) {
+            // someone won this race
+        }
         unset($this->header);
     }
 
