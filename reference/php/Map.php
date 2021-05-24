@@ -24,10 +24,6 @@ class Map implements MapInterface, \ArrayAccess
      */
     private StateItem $header;
 
-    private function getDefaultHeader() {
-        return new Header(generation: ceil(log(max(256, $this->expectedCapacity)) / log(2)) - 7, maxLoad: $this->maxLoad);
-    }
-
     /**
      * Map constructor.
      *
@@ -46,6 +42,35 @@ class Map implements MapInterface, \ArrayAccess
         private int $expectedCapacity = 256,
         private int $maxLoad = 12
     ) {
+    }
+
+    /**
+     * @inheritDoc
+     */
+    public function offsetExists($offset): bool
+    {
+        return $this->contains($offset);
+    }
+
+    /**
+     * Whether the hashmap contains a key
+     *
+     * @param string $key The key to check
+     *
+     * @return bool True if it exists (including null)
+     */
+    public function contains(string $key): bool
+    {
+        $this->getHeaderAndMaybeRebuild();
+        $bucket = $this->stateManager->load_state(
+            $this->storeName,
+            $this->getBucketKey($key),
+            new Node(),
+            consistency: new StrongFirstWrite()
+        );
+        $node   = $this->getNodeFromItem($bucket);
+
+        return array_key_exists($key, $node->items);
     }
 
     /**
@@ -93,11 +118,22 @@ class Map implements MapInterface, \ArrayAccess
             default_value: $this->getDefaultHeader(),
             consistency: new StrongFirstWrite()
         );
+        if ($this->header->etag === null) {
+            $this->header->etag = "-1";
+            $this->stateManager->save_state($this->storeName, $this->header);
+        }
         if ( ! $this->header->value instanceof Header) {
-            $this->header->value = $this->deserializer->from_json(Header::class, $this->header->value);
+            $this->header->value = $this->deserializer->from_value(Header::class, $this->header->value);
         }
 
         return $this->header->value;
+    }
+
+    private function getDefaultHeader()
+    {
+        return new Header(
+            generation: ceil(log(max(256, $this->expectedCapacity)) / log(2)) - 7, maxLoad: $this->maxLoad
+        );
     }
 
     /**
@@ -107,7 +143,7 @@ class Map implements MapInterface, \ArrayAccess
     {
         $header = $this->getHeaderFromHeader();
         if ( ! $header->rebuilding) {
-            $header->rebuilding = true;
+            $this->header->value->rebuilding = true;
             $this->stateManager->save_state($this->storeName, $this->header);
         }
         $nextGenerationHeader = clone $header;
@@ -134,13 +170,15 @@ class Map implements MapInterface, \ArrayAccess
             );
             $node   = $this->getNodeFromItem($bucket);
             foreach ($node->items as $key => $value) {
-                try {
-                    $nextGeneration->putRaw($key, $value);
-                } catch (DaprException $exception) {
-                    // try again
-                    $pointer--;
-                    break;
-                }
+                $retries = 100;
+                do {
+                    try {
+                        $nextGeneration->putRaw($key, $value);
+                        $retries = 0;
+                    } catch (DaprException) {
+                        $retries--;
+                    }
+                } while ($retries > 0);
             }
 
             $pointer = ($pointer + 1) % $this->getMapSize();
@@ -148,7 +186,7 @@ class Map implements MapInterface, \ArrayAccess
 
         $header->rebuilding = false;
         $header->generation++;
-        $this->header->value = $this->serializer->as_json($header);
+        $this->header->value = $header;
         $this->stateManager->save_state($this->storeName, $this->header);
         unset($this->header);
     }
@@ -187,16 +225,16 @@ class Map implements MapInterface, \ArrayAccess
      */
     private function putRaw(string $key, string $value): void
     {
-        $header     = $this->getHeaderAndMaybeRebuild();
-        $bucket_key = $this->getBucketKey($key);
-        $nodeItem   = $this->stateManager->load_state(
+        $header         = $this->getHeaderAndMaybeRebuild();
+        $bucket_key     = $this->getBucketKey($key);
+        $nodeItem       = $this->stateManager->load_state(
             $this->storeName,
             $bucket_key,
             default_value: new Node(),
             consistency: new StrongFirstWrite()
         );
         $nodeItem->etag ??= '-1';
-        $node       = $this->getNodeFromItem($nodeItem);
+        $node           = $this->getNodeFromItem($nodeItem);
         if (isset($node->items[$key]) && $node->items[$key] === $value) {
             return;
         }
@@ -231,35 +269,6 @@ class Map implements MapInterface, \ArrayAccess
     private function getBucket(string $key): int
     {
         return Murmur::hash3_int($key) % $this->getMapSize();
-    }
-
-    /**
-     * @inheritDoc
-     */
-    public function offsetExists($offset): bool
-    {
-        return $this->contains($offset);
-    }
-
-    /**
-     * Whether the hashmap contains a key
-     *
-     * @param string $key The key to check
-     *
-     * @return bool True if it exists (including null)
-     */
-    public function contains(string $key): bool
-    {
-        $this->getHeaderAndMaybeRebuild();
-        $bucket = $this->stateManager->load_state(
-            $this->storeName,
-            $this->getBucketKey($key),
-            new Node(),
-            consistency: new StrongFirstWrite()
-        );
-        $node   = $this->getNodeFromItem($bucket);
-
-        return array_key_exists($key, $node->items);
     }
 
     /**
@@ -313,7 +322,7 @@ class Map implements MapInterface, \ArrayAccess
      */
     public function put(string $key, mixed $value): void
     {
-        $value = $this->serializer->as_json($value);
+        $value   = $this->serializer->as_json($value);
         $retries = 100;
         do {
             try {
@@ -322,7 +331,7 @@ class Map implements MapInterface, \ArrayAccess
             } catch (DaprException) {
                 $retries--;
             }
-        } while($retries > 0);
+        } while ($retries > 0);
     }
 
     /**
@@ -344,15 +353,15 @@ class Map implements MapInterface, \ArrayAccess
         do {
             try {
                 $this->getHeaderAndMaybeRebuild();
-                $bucket_key = $this->getBucketKey($key);
-                $bucket     = $this->stateManager->load_state(
+                $bucket_key   = $this->getBucketKey($key);
+                $bucket       = $this->stateManager->load_state(
                     $this->storeName,
                     $bucket_key,
                     default_value: new Node(),
                     consistency: new StrongFirstWrite()
                 );
                 $bucket->etag ??= '-1';
-                $node       = $this->getNodeFromItem($bucket);
+                $node         = $this->getNodeFromItem($bucket);
                 unset($node->items[$key]);
                 $bucket->value = $this->serializer->as_json($node);
                 $this->stateManager->save_state($this->storeName, $bucket);
@@ -360,6 +369,6 @@ class Map implements MapInterface, \ArrayAccess
             } catch (DaprException) {
                 $retries--;
             }
-        } while($retries > 0);
+        } while ($retries > 0);
     }
 }

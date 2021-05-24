@@ -17,9 +17,10 @@ if ( ! isset($argv[1])) {
 
 const NUMBER_MESSAGES = 2000;
 
-function fork_and_run($message, $serializer, $deserializer, $stateManager, $seed) {
+function fork_and_run($message, $serializer, $deserializer, $stateManager, $seed)
+{
     $pid = pcntl_fork();
-    switch($pid) {
+    switch ($pid) {
         case -1:
             echo "Unable to fork!\n";
             exit(1);
@@ -30,9 +31,9 @@ function fork_and_run($message, $serializer, $deserializer, $stateManager, $seed
                 'statestore',
                 $serializer,
                 $deserializer,
-                expectedCapacity: NUMBER_MESSAGES
+            //expectedCapacity: NUMBER_MESSAGES
             );
-            $map->put('php ' . $message, $message);
+            $map->put('php '.$message, $message);
             exit();
         default:
             return $pid;
@@ -47,6 +48,12 @@ switch ($argv[1]) {
         }
 
         $app = App::create();
+        set_error_handler(
+            function ($err_no, $err_str, $err_file, $err_line) {
+                echo "ERROR: $err_str in $err_file:$err_line";
+                exit(1);
+            }
+        );
         [$serializer, $deserializer, $stateManager] = $app->run(
             fn(ISerializer $serializer, IDeserializer $deserializer, StateManager $stateManager) => [
                 $serializer,
@@ -56,30 +63,40 @@ switch ($argv[1]) {
         );
 
         $written_messages = 0;
-        $every = (int) round(NUMBER_MESSAGES * 0.1);
+        $every            = (int)round(NUMBER_MESSAGES * 0.1);
 
-        $number_threads = 30;
+        $number_threads = 10;
 
         echo "Starting to write.\n";
-        $pids = [];
+        $pids       = [];
         $start_time = microtime(true);
         for ($i = 0; $i < NUMBER_MESSAGES; $i++) {
             $pids[] = fork_and_run($i, $serializer, $deserializer, $stateManager, $seed);
-            if(count($pids) >= $number_threads) {
-                $wait = array_shift($pids);
-                pcntl_waitpid($wait, $status, WNOHANG | WUNTRACED );
-                if(pcntl_wifexited($status)) {
-                    if(++$written_messages % $every === 0) echo "Wrote $written_messages messages.\n";
+            waiting:
+            if (count($pids) >= $number_threads) {
+                $wait       = array_shift($pids);
+                pcntl_waitpid($wait, $status, WUNTRACED);
+                if (pcntl_wifexited($status)) {
+                    if (pcntl_wexitstatus($status) !== 0) {
+                        echo "Child failed with a non-zero exit!";
+                        exit(1);
+                    }
+                    if (++$written_messages % $every === 0) {
+                        echo "Wrote $written_messages messages.\n";
+                    }
                 } else {
                     $pids[] = $wait;
+                    goto waiting;
                 }
             }
         }
-        foreach($pids as $pid) {
+        foreach ($pids as $pid) {
             $wait = array_shift($pids);
-            pcntl_waitpid($wait, $status, WNOHANG | WUNTRACED );
-            if(pcntl_wifexited($status)) {
-                if(++$written_messages % $every === 0) echo "Wrote $written_messages messages.\n";
+            pcntl_waitpid($wait, $status, WNOHANG | WUNTRACED);
+            if (pcntl_wifexited($status)) {
+                if (++$written_messages % $every === 0) {
+                    echo "Wrote $written_messages messages.\n";
+                }
             } else {
                 $pids[] = $wait;
             }
@@ -95,9 +112,9 @@ switch ($argv[1]) {
             $deserializer,
             expectedCapacity: NUMBER_MESSAGES
         );
-        for($i = 0; $i < NUMBER_MESSAGES; $i++) {
+        for ($i = 0; $i < NUMBER_MESSAGES; $i++) {
             $result = $map->get('php '.$i, 'int');
-            if($i !== $result) {
+            if ($i !== $result) {
                 echo("failed (received $result and expected $i).\n");
                 exit(1);
             }
