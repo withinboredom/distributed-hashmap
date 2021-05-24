@@ -10,15 +10,20 @@
     }
   ],
   "require": {
+    "php": ">=8.0",
     "dapr/php-sdk": "dev-main",
     "lastguest/murmurhash": "^2.1",
     "ext-pcntl": "*",
     "ext-posix": "*"
   },
-  "description": "",
+  "description": "A distributed hashmap for Dapr state stores.",
   "autoload": {
     "psr-4": {
-      "DistributedHashMap\\": "reference/php",
+      "DistributedHashMap\\": "reference/php"
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
       "DistributedHashMap\\Test\\": "tests/php"
     }
   },
