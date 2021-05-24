@@ -34,7 +34,7 @@ namespace IntegrationTest
                             var every = (int)Math.Round(NumberMessages * 0.1f);
                             if(++writtenMessages % every == 0) Console.WriteLine($"Written {writtenMessages} messages.");
                         };
-                        var client = new DaprClientBuilder().Build();
+                        var client = new DaprClientBuilder().UseGrpcEndpoint("http://localhost:50001").Build();
 
                         stopwatch.Start();
 
@@ -83,7 +83,7 @@ namespace IntegrationTest
                         }
 
                         var langs = new List<string> {"c#", "php"};
-                        client = new DaprClientBuilder().Build();
+                        client = new DaprClientBuilder().UseGrpcEndpoint("http://localhost:50001").Build();
 
                         foreach (var lang in langs)
                         {

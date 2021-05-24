@@ -133,7 +133,7 @@ namespace DistributedHashMap
 
         public Task Put<T>(string key, T value, CancellationToken cancellationToken = default)
         {
-            var serializedValue = JsonSerializer.Serialize(value);
+            var serializedValue = JsonSerializer.Serialize(value, _client.JsonSerializerOptions);
             return DoRetry(() => PutRaw(key, serializedValue, cancellationToken), cancellationToken);
         }
 
@@ -158,7 +158,7 @@ namespace DistributedHashMap
             }
 
             var serializedValue = bucket.node.Items[key];
-            return JsonSerializer.Deserialize<T>(serializedValue)!;
+            return JsonSerializer.Deserialize<T>(serializedValue, _client.JsonSerializerOptions)!;
         }
 
         public async Task<bool> Contains(string key, CancellationToken cancellationToken = default)
