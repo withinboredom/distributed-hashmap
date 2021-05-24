@@ -30,3 +30,28 @@ hashmap will immediately start copying all keys from the hashmap into a new gene
 reader/writer needs to participate to ensure redundancy because they do not coordinate. Old keys from previous
 generations are not deleted. While this is pretty fast, it still takes several minutes once the size of the hashmap
 grows beyond ~100,000 items.
+
+### Concurrency
+
+In my experiments, there isn't many issues with concurrency except how different languages approach parallel tasks. For
+example, forking in PHP results in very little overhead allowing over 2000 threads to concurrently write to a hashmap
+with very little overhead, while C# tends to bog down after the number of actively writing threads goes over the number
+of physical cores on the machine.
+
+### Performance
+
+Performance is pretty good but could be better, here's continuous writing for each platform:
+
+| language | operation | number of items | threads | time (s) |
+| -------- | --------- | --------------- | ------- | -------- |
+| C#       | writes    | 1,000           | 10      | 1.79     |
+| C#       | reads     | 1,000           | 1       | 0.94     |
+| C#       | writes    | 10,000          | 10      | 15.17    |
+| C#       | reads     | 10,000          | 1       | 10.62    |
+| PHP      | writes    | 1,000           | 10      | 1.82     |
+| PHP      | reads     | 1,000           | 1       | 1.97     |
+| PHP      | writes    | 10,000          | 10      | 18.54    |
+| PHP      | reads     | 10,000          | 1       | 21.97    |
+
+The largest difference with reading in PHP is that there's no async/await, so running multithreading reads results in
+around the same performance characteristics as C#, indicating that the bottleneck is with the sidecar.

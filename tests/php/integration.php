@@ -150,15 +150,19 @@ switch ($argv[1]) {
         }
         $end_time = microtime(true);
 
+        $elapsed_seconds = number_format(($end_time - $start_time), 2);
+        echo "Wrote $written_messages in $elapsed_seconds seconds.\n";
+
         echo "verifying...";
         $map = new Map(
             'php'.$seed,
             $stateManager,
             'statestore',
             $serializer,
-            $deserializer,
-            expectedCapacity: NUMBER_MESSAGES
+            $deserializer
         );
+
+        $start_time = microtime(true);
         for ($i = 0; $i < NUMBER_MESSAGES; $i++) {
             $result = $map->get('php '.$i, 'int');
             if ($i !== $result) {
@@ -166,8 +170,6 @@ switch ($argv[1]) {
                 exit(1);
             }
         }
-        echo "verified!\n";
-
-        $elapsed_seconds = number_format(($end_time - $start_time), 2);
-        echo "Wrote $written_messages in $elapsed_seconds seconds.\n";
+        $elapsed_seconds = number_format(microtime(true) - $start_time, 2);
+        echo "verified in $elapsed_seconds seconds!\n";
 }
