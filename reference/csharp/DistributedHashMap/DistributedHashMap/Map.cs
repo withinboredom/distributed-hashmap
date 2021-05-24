@@ -114,6 +114,7 @@ namespace DistributedHashMap
                 nodeItem = (null, "");
             }
 
+            nodeItem.etag = nodeItem.etag == String.Empty ? "-1" : nodeItem.etag;
             nodeItem.node ??= new Node();
 
             if (nodeItem.node.Items.ContainsKey(key) && nodeItem.node.Items[key] == serializedValue)
@@ -181,16 +182,17 @@ namespace DistributedHashMap
         {
             await GetHeaderAndMaybeRebuild(cancellationToken);
             var bucketKey = GetBucketKey(key);
-            (Node node, string? etag) bucket;
+            (Node? node, string etag) bucket;
             try
             {
                 bucket = await _client.GetStateAndETagAsync<Node>(_storeName, bucketKey, ConsistencyMode.Strong, cancellationToken: cancellationToken);
             }
             catch (DaprException)
             {
-                bucket = (new Node(), null);
+                bucket = (new Node(), "");
             }
 
+            bucket.etag = bucket.etag == String.Empty ? "-1" : bucket.etag;
             if (!bucket.node.Items.ContainsKey(key)) return;
 
             bucket.node.Items.Remove(key);

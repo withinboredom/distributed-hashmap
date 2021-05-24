@@ -60,7 +60,7 @@ namespace IntegrationTest
                         stopwatch.Stop();
 
                         Console.Write("Verifying... ");
-                        var map = new Map("c# " + seed, "statestore", client);
+                        var map = new Map("c#" + seed, "statestore", client, expectedCapacity: NumberMessages);
                         for (var i = 0; i < NumberMessages; i++)
                         {
                             var verification = await map.Get<int>("c# " + i);
