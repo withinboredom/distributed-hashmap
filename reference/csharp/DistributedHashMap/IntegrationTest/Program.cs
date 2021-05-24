@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading.Tasks;
 using Dapr.Client;
@@ -75,6 +76,29 @@ namespace IntegrationTest
                         Console.WriteLine($"{writtenMessages}/{NumberMessages} messages written in {stopwatch.Elapsed.TotalSeconds:N4} seconds");
                         return 0;
                     case "read":
+                        seed = Guid.NewGuid().ToString();
+                        if (args.Length > 1)
+                        {
+                            seed = args[1];
+                        }
+
+                        var langs = new List<string> {"c#", "php"};
+                        client = new DaprClientBuilder().Build();
+
+                        foreach (var lang in langs)
+                        {
+                            Console.WriteLine($"Verifying {lang}");
+                            map = new Map($"{lang} {seed}", "statestore", client);
+                            for (var i = 0; i < NumberMessages; i++)
+                            {
+                                var verification = await map.Get<int>($"{lang} {i}");
+                                if (verification != i)
+                                {
+                                    Console.WriteLine($"Failed read verification for {lang} and got {verification} instead of {i}");
+                                }
+                            }
+                        }
+
                         return 0;
                 }
             }
