@@ -89,6 +89,8 @@ namespace IntegrationTest
                         {
                             Console.Write($"Verifying {lang}: ");
                             map = new Map($"{lang}{seed}", "statestore", client);
+                            stopwatch = new Stopwatch();
+                            stopwatch.Start();
                             for (var i = 0; i < NumberMessages; i++)
                             {
                                 var verification = await map.Get<int>($"{lang} {i}");
@@ -98,6 +100,8 @@ namespace IntegrationTest
                                     return 1;
                                 }
                             }
+                            stopwatch.Stop();
+                            Console.WriteLine($"Done in {stopwatch.Elapsed.TotalSeconds} seconds");
                         }
 
                         return 0;
