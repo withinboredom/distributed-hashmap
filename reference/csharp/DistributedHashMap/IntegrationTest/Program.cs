@@ -1,5 +1,4 @@
 ﻿using System;
-using System.Collections.Generic;
 using System.Diagnostics;
 using System.Threading.Tasks;
 using Dapr.Client;
@@ -9,7 +8,7 @@ namespace IntegrationTest
 {
     class Program
     {
-        private const int NumberMessages = 10000;
+        private const int NumberMessages = 2000;
 
         static async Task<int> Main(string[] args)
         {
@@ -34,14 +33,13 @@ namespace IntegrationTest
                             var every = (int)Math.Round(NumberMessages * 0.1f);
                             if(++writtenMessages % every == 0) Console.WriteLine($"Written {writtenMessages} messages.");
                         };
-                        var messages = new List<Task>();
                         var client = new DaprClientBuilder().Build();
 
                         stopwatch.Start();
 
                         var result = Parallel.For(0, NumberMessages, new ParallelOptions
                         {
-                            MaxDegreeOfParallelism = 12
+                            MaxDegreeOfParallelism = 30
                         }, (int i, ParallelLoopState state) =>
                         {
                             var map = new Map("c#" + seed, "statestore", client, expectedCapacity: NumberMessages);
