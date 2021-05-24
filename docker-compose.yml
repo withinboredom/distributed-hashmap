@@ -4,7 +4,7 @@ services:
     image: redis
   csharp-daprd:
     image: daprio/daprd:1.2.0-rc.5
-    command: [ "./daprd","-app-id","csharp","-placement-host-address","placement:50006","-components-path","/components" ]
+    command: [ "./daprd","-app-id","tests","-placement-host-address","placement:50006","-components-path","/components" ]
     volumes:
       - ./components:/components
     depends_on:
@@ -29,7 +29,7 @@ services:
       - csharp-daprd
   php-daprd:
     image: daprio/daprd:1.2.0-rc.5
-    command: [ "./daprd","-app-id","php","-placement-host-address","placement:50006","-components-path","/components" ]
+    command: [ "./daprd","-app-id","tests","-placement-host-address","placement:50006","-components-path","/components" ]
     volumes:
       - ./components:/components
     depends_on:
