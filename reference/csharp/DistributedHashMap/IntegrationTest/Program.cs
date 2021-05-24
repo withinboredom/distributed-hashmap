@@ -10,7 +10,7 @@ namespace IntegrationTest
     {
         private const int NumberMessages = 2000;
 
-        static async Task<int> Main(string[] args)
+        static int Main(string[] args)
         {
             if (args.Length > 0)
             {
