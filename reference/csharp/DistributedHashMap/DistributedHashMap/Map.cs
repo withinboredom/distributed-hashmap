@@ -65,7 +65,14 @@ namespace DistributedHashMap
                 _headerTuple = (null, "");
             }
 
-            return _headerTuple.header ?? (_headerTuple.header = DefaultHeader);
+            if (_headerTuple.header == null)
+            {
+                await _client.SaveStateAsync(_storeName, HeaderKey, DefaultHeader,
+                    cancellationToken: cancellationToken);
+                _headerTuple.header = DefaultHeader;
+            }
+
+            return _headerTuple.header;
         }
 
         private async Task<Header> GetHeaderAndMaybeRebuild(CancellationToken cancellationToken = default)

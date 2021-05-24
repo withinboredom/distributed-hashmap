@@ -40,7 +40,7 @@ namespace IntegrationTest
 
                         var result = Parallel.For(0, NumberMessages, new ParallelOptions
                         {
-                            MaxDegreeOfParallelism = 10
+                            MaxDegreeOfParallelism = 1
                         }, (int i, ParallelLoopState state) =>
                         {
                             var map = new Map("c#" + seed, "statestore", client);
@@ -60,6 +60,9 @@ namespace IntegrationTest
                         });
                         stopwatch.Stop();
 
+                        Console.WriteLine($"{writtenMessages}/{NumberMessages} messages written in {stopwatch.Elapsed.TotalSeconds:N4} seconds");
+
+                        stopwatch.Restart();
                         Console.Write("Verifying... ");
                         var map = new Map("c#" + seed, "statestore", client);
                         for (var i = 0; i < NumberMessages; i++)
@@ -71,9 +74,9 @@ namespace IntegrationTest
                                 return 1;
                             }
                         }
-                        Console.WriteLine("verified!");
+                        stopwatch.Stop();
+                        Console.WriteLine($"verified in {stopwatch.Elapsed.TotalSeconds:N2} seconds!");
                         
-                        Console.WriteLine($"{writtenMessages}/{NumberMessages} messages written in {stopwatch.Elapsed.TotalSeconds:N4} seconds");
                         return 0;
                     case "read":
                         seed = Guid.NewGuid().ToString();
