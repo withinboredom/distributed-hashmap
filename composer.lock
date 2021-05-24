@@ -4,20 +4,20 @@
         "Read more about it at https://getcomposer.org/doc/01-basic-usage.md#installing-dependencies",
         "This file is @generated automatically"
     ],
-    "content-hash": "675d57c18e88039ca6e9c4aff325c625",
+    "content-hash": "6edb1df66a5cd61da1c7715789e690a9",
     "packages": [
         {
             "name": "dapr/php-sdk",
-            "version": "v1.1.0",
+            "version": "dev-main",
             "source": {
                 "type": "git",
                 "url": "https://github.com/dapr/php-sdk.git",
-                "reference": "34769d86292e60af2a35b6313e6809abb10d1ee7"
+                "reference": "d53e9863aafe93f1e6aa665ece00e81096063c9e"
             },
             "dist": {
                 "type": "zip",
-                "url": "https://api.github.com/repos/dapr/php-sdk/zipball/34769d86292e60af2a35b6313e6809abb10d1ee7",
-                "reference": "34769d86292e60af2a35b6313e6809abb10d1ee7",
+                "url": "https://api.github.com/repos/dapr/php-sdk/zipball/d53e9863aafe93f1e6aa665ece00e81096063c9e",
+                "reference": "d53e9863aafe93f1e6aa665ece00e81096063c9e",
                 "shasum": ""
             },
             "require": {
@@ -40,6 +40,7 @@
                 "phpunit/phpunit": "^9",
                 "vimeo/psalm": "^4.3"
             },
+            "default-branch": true,
             "type": "library",
             "autoload": {
                 "psr-4": {
@@ -60,9 +61,9 @@
             "description": "Dapr Implementation in PHP",
             "support": {
                 "issues": "https://github.com/dapr/php-sdk/issues",
-                "source": "https://github.com/dapr/php-sdk/tree/v1.1.0"
+                "source": "https://github.com/dapr/php-sdk/tree/main"
             },
-            "time": "2021-04-10T08:22:13+00:00"
+            "time": "2021-05-24T11:12:21+00:00"
         },
         {
             "name": "laminas/laminas-httphandlerrunner",
@@ -3341,11 +3342,14 @@
     ],
     "aliases": [],
     "minimum-stability": "stable",
-    "stability-flags": [],
+    "stability-flags": {
+        "dapr/php-sdk": 20
+    },
     "prefer-stable": false,
     "prefer-lowest": false,
     "platform": {
-        "ext-pcntl": "*"
+        "ext-pcntl": "*",
+        "ext-posix": "*"
     },
     "platform-dev": [],
     "plugin-api-version": "2.0.0"

@@ -195,6 +195,7 @@ class Map implements MapInterface, \ArrayAccess
             default_value: new Node(),
             consistency: new StrongFirstWrite()
         );
+        $nodeItem->etag ??= '-1';
         $node       = $this->getNodeFromItem($nodeItem);
         if (isset($node->items[$key]) && $node->items[$key] === $value) {
             return;
@@ -312,7 +313,16 @@ class Map implements MapInterface, \ArrayAccess
      */
     public function put(string $key, mixed $value): void
     {
-        $this->putRaw($key, $this->serializer->as_json($value));
+        $value = $this->serializer->as_json($value);
+        $retries = 100;
+        do {
+            try {
+                $this->putRaw($key, $value);
+                $retries = 0;
+            } catch (DaprException) {
+                $retries--;
+            }
+        } while($retries > 0);
     }
 
     /**
@@ -330,17 +340,26 @@ class Map implements MapInterface, \ArrayAccess
      */
     public function remove(string $key): void
     {
-        $this->getHeaderAndMaybeRebuild();
-        $bucket_key = $this->getBucketKey($key);
-        $bucket     = $this->stateManager->load_state(
-            $this->storeName,
-            $bucket_key,
-            default_value: new Node(),
-            consistency: new StrongFirstWrite()
-        );
-        $node       = $this->getNodeFromItem($bucket);
-        unset($node->items[$key]);
-        $bucket->value = $this->serializer->as_json($node);
-        $this->stateManager->save_state($this->storeName, $bucket);
+        $retries = 100;
+        do {
+            try {
+                $this->getHeaderAndMaybeRebuild();
+                $bucket_key = $this->getBucketKey($key);
+                $bucket     = $this->stateManager->load_state(
+                    $this->storeName,
+                    $bucket_key,
+                    default_value: new Node(),
+                    consistency: new StrongFirstWrite()
+                );
+                $bucket->etag ??= '-1';
+                $node       = $this->getNodeFromItem($bucket);
+                unset($node->items[$key]);
+                $bucket->value = $this->serializer->as_json($node);
+                $this->stateManager->save_state($this->storeName, $bucket);
+                $retries = 0;
+            } catch (DaprException) {
+                $retries--;
+            }
+        } while($retries > 0);
     }
 }

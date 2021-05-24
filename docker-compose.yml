@@ -1,0 +1,36 @@
+version: "3"
+services:
+  redis:
+    image: redis
+  csharp-daprd:
+    image: daprio/daprd:1.2.0-rc.5
+    command: [ "./daprd","-app-id","csharp","-placement-host-address","placement:50006","-components-path","/components" ]
+    volumes:
+      - ./components:/components
+    depends_on:
+      - redis
+  csharp-writer:
+    image: withinboredom/dhm-csharp-integration:latest
+    build:
+      dockerfile: images/csharp.Dockerfile
+      context: .
+    command: write test
+    network_mode: service:csharp-daprd
+    depends_on:
+      - csharp-daprd
+  php-daprd:
+    image: daprio/daprd:1.2.0-rc.5
+    command: [ "./daprd","-app-id","php","-placement-host-address","placement:50006","-components-path","/components" ]
+    volumes:
+      - ./components:/components
+    depends_on:
+      - redis
+  php-writer:
+    image: withinboredom/dhm-php-integration:latest
+    build:
+      dockerfile: images/php.Dockerfile
+      context: .
+    command: write test
+    network_mode: service:php-daprd
+    depends_on:
+      - php-daprd

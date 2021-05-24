@@ -10,7 +10,7 @@
     }
   ],
   "require": {
-    "dapr/php-sdk": "^1.1",
+    "dapr/php-sdk": "dev-main",
     "lastguest/murmurhash": "^2.1",
     "ext-pcntl": "*",
     "ext-posix": "*"
