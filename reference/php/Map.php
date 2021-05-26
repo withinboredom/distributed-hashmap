@@ -2,22 +2,28 @@
 
 namespace DistributedHashMap;
 
+use ArrayAccess;
 use Dapr\consistency\StrongFirstWrite;
+use Dapr\DaprClient;
 use Dapr\Deserialization\IDeserializer;
 use Dapr\exceptions\DaprException;
+use Dapr\PubSub\Topic;
 use Dapr\Serialization\ISerializer;
 use Dapr\State\IManageState;
 use Dapr\State\StateItem;
 use DistributedHashMap\Internal\Header;
+use DistributedHashMap\Internal\KeyTrigger;
 use DistributedHashMap\Internal\MapInterface;
 use DistributedHashMap\Internal\Node;
+use JetBrains\PhpStorm\Pure;
 use lastguest\Murmur;
+use Psr\Log\LoggerInterface;
 
 /**
  * Class Map
  * @package DistributedHashMap
  */
-class Map implements MapInterface, \ArrayAccess
+class Map implements MapInterface, ArrayAccess
 {
     /**
      * @var StateItem The cached header for operations
@@ -39,27 +45,13 @@ class Map implements MapInterface, \ArrayAccess
         private string $storeName,
         private ISerializer $serializer,
         private IDeserializer $deserializer,
+        private LoggerInterface $logger,
         private int $expectedCapacity = 256,
         private int $maxLoad = 12
     ) {
     }
 
-    /**
-     * @inheritDoc
-     */
-    public function offsetExists($offset): bool
-    {
-        return $this->contains($offset);
-    }
-
-    /**
-     * Whether the hashmap contains a key
-     *
-     * @param string $key The key to check
-     *
-     * @return bool True if it exists (including null)
-     */
-    public function contains(string $key): bool
+    public function subscribe(string $key, string $pubsubName, string $topic): void
     {
         $this->getHeaderAndMaybeRebuild();
         $bucket = $this->stateManager->load_state(
@@ -68,9 +60,18 @@ class Map implements MapInterface, \ArrayAccess
             new Node(),
             consistency: new StrongFirstWrite()
         );
-        $node   = $this->getNodeFromItem($bucket);
+        $bucket->etag ?? "-1";
+        $node = $this->getNodeFromItem($bucket);
 
-        return array_key_exists($key, $node->items);
+        $trigger = new KeyTrigger($pubsubName, $topic);
+
+        if (isset($node->triggers[$key]) && $node->triggers[$key] == $trigger) {
+            return;
+        }
+
+        $node->triggers[$key] = $trigger;
+
+        $this->stateManager->save_state($this->storeName, $bucket);
     }
 
     /**
@@ -133,7 +134,7 @@ class Map implements MapInterface, \ArrayAccess
         return $this->header->value;
     }
 
-    private function getDefaultHeader()
+    #[Pure] private function getDefaultHeader(): Header
     {
         return new Header(
             generation: ceil(log(max(256, $this->expectedCapacity)) / log(2)) - 7, maxLoad: $this->maxLoad
@@ -177,7 +178,7 @@ class Map implements MapInterface, \ArrayAccess
                 $retries = 100;
                 do {
                     try {
-                        $nextGeneration->putRaw($key, $value);
+                        $nextGeneration->putRaw($key, $value, $node->triggers[$key] ?? null);
                         $retries = 0;
                     } catch (DaprException) {
                         $retries--;
@@ -204,7 +205,7 @@ class Map implements MapInterface, \ArrayAccess
      *
      * @return int The current size of the map
      */
-    private function getMapSize(): int
+    #[Pure] private function getMapSize(): int
     {
         return pow(2, 7 + $this->getHeaderFromHeader()->generation);
     }
@@ -231,7 +232,7 @@ class Map implements MapInterface, \ArrayAccess
      * @param string $key The key to put
      * @param string $value The value to put
      */
-    private function putRaw(string $key, string $value): void
+    private function putRaw(string $key, string $value, KeyTrigger|null $subscribe): TriggerEvent|null
     {
         $header         = $this->getHeaderAndMaybeRebuild();
         $bucket_key     = $this->getBucketKey($key);
@@ -243,15 +244,28 @@ class Map implements MapInterface, \ArrayAccess
         );
         $nodeItem->etag ??= '-1';
         $node           = $this->getNodeFromItem($nodeItem);
-        if (isset($node->items[$key]) && $node->items[$key] === $value) {
-            return;
+
+        if ((isset($node->items[$key]) && $node->items[$key] === $value) && (empty($subscribe) || (isset($node->triggers[$key]) && $node->triggers[$key] == $subscribe))) {
+            return null;
         }
+
+        if ($subscribe) {
+            $node->triggers[$key] = $subscribe;
+        }
+
+        $previousValue     = $node->items[$key] ?? null;
         $node->items[$key] = $value;
         $this->stateManager->save_state($this->storeName, $nodeItem);
 
         if (count($node->items) > $header->maxLoad) {
             $this->rebuild();
         }
+
+        if ($subscribe || ($trigger = $node->triggers[$key] ?? null) === null) {
+            return null;
+        }
+
+        return new TriggerEvent($key, $this->name, $previousValue, $value, $trigger->pubsubName, $trigger->topic);
     }
 
     /**
@@ -276,6 +290,55 @@ class Map implements MapInterface, \ArrayAccess
     private function getBucket(string $key): int
     {
         return Murmur::hash3_int($key) % $this->getMapSize();
+    }
+
+    public function unsubscribe(string $key): void
+    {
+        $this->getHeaderAndMaybeRebuild();
+        $bucket = $this->stateManager->load_state(
+            $this->storeName,
+            rawurlencode($this->getBucketKey($key)),
+            new Node(),
+            consistency: new StrongFirstWrite()
+        );
+        $node   = $this->getNodeFromItem($bucket);
+
+        if ( ! isset($node->triggers[$key])) {
+            return;
+        }
+
+        unset($node->triggers[$key]);
+
+        $this->stateManager->save_state($this->storeName, $bucket);
+    }
+
+    /**
+     * @inheritDoc
+     */
+    public function offsetExists($offset): bool
+    {
+        return $this->contains($offset);
+    }
+
+    /**
+     * Whether the hashmap contains a key
+     *
+     * @param string $key The key to check
+     *
+     * @return bool True if it exists (including null)
+     */
+    public function contains(string $key): bool
+    {
+        $this->getHeaderAndMaybeRebuild();
+        $bucket = $this->stateManager->load_state(
+            $this->storeName,
+            rawurlencode($this->getBucketKey($key)),
+            new Node(),
+            consistency: new StrongFirstWrite()
+        );
+        $node   = $this->getNodeFromItem($bucket);
+
+        return array_key_exists($key, $node->items);
     }
 
     /**
@@ -333,12 +396,22 @@ class Map implements MapInterface, \ArrayAccess
         $retries = 100;
         do {
             try {
-                $this->putRaw($key, $value);
+                $trigger = $this->putRaw($key, $value, null);
                 $retries = 0;
             } catch (DaprException) {
                 $retries--;
             }
         } while ($retries > 0);
+
+        if ( ! empty($trigger)) {
+            $this->broadcast($trigger);
+        }
+    }
+
+    private function broadcast(TriggerEvent $trigger)
+    {
+        $topic = new Topic($trigger->pubsubName, $trigger->topic, DaprClient::get_client(), $this->logger);
+        $topic->publish($trigger);
     }
 
     /**
@@ -369,6 +442,21 @@ class Map implements MapInterface, \ArrayAccess
                 );
                 $bucket->etag ??= '-1';
                 $node         = $this->getNodeFromItem($bucket);
+                if ( ! array_key_exists($key, $node->items)) {
+                    return;
+                }
+                if ($node->triggers[$key] ?? false) {
+                    $this->broadcast(
+                        new TriggerEvent(
+                            $key,
+                            $this->name,
+                            $node->items[$key],
+                            null,
+                            $node->triggers[$key]->pubsubName,
+                            $node->triggers[$key]->topic
+                        )
+                    );
+                }
                 unset($node->items[$key]);
                 $this->stateManager->save_state($this->storeName, $bucket);
                 $retries = 0;
