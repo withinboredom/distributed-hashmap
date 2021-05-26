@@ -9,6 +9,7 @@ use Dapr\Deserialization\IDeserializer;
 use Dapr\Serialization\ISerializer;
 use Dapr\State\StateManager;
 use DistributedHashMap\Map;
+use Psr\Log\NullLogger;
 
 if ( ! isset($argv[1])) {
     echo "usage: integration.php [write|read]";
@@ -31,6 +32,7 @@ function fork_and_run($message, $serializer, $deserializer, $stateManager, $seed
                 'statestore',
                 $serializer,
                 $deserializer,
+                new NullLogger(),
             //expectedCapacity: NUMBER_MESSAGES
             );
             $map->put('php '.$message, $message);
@@ -72,6 +74,7 @@ switch ($argv[1]) {
                 'statestore',
                 $serializer,
                 $deserializer,
+                new NullLogger(),
             //expectedCapacity: NUMBER_MESSAGES
             );
             echo "Verifying $lang: ";
@@ -159,7 +162,8 @@ switch ($argv[1]) {
             $stateManager,
             'statestore',
             $serializer,
-            $deserializer
+            $deserializer,
+            new NullLogger(),
         );
 
         $start_time = microtime(true);

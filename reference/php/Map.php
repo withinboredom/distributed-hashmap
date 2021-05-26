@@ -160,6 +160,7 @@ class Map implements MapInterface, ArrayAccess
             $this->storeName,
             $this->serializer,
             $this->deserializer,
+            $this->logger,
             $this->expectedCapacity,
             $this->maxLoad
         );
