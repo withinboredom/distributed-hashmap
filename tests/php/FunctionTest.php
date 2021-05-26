@@ -34,7 +34,7 @@ class FunctionTest extends TestCase
 
     private function getMap(string $name = 'test'): Map
     {
-        return new Map($name, $this->stateManager, 'store', $this->serializer, $this->deserializer);
+        return new Map($name, $this->stateManager, 'store', $this->serializer, $this->deserializer, new NullLogger());
     }
 
     public function testCountAndResize(): void

@@ -8,6 +8,7 @@ use Dapr\Serialization\ISerializer;
 use Dapr\State\StateManager;
 use DistributedHashMap\Map;
 use PHPUnit\Framework\TestCase;
+use Psr\Log\NullLogger;
 
 class DaprTest extends TestCase
 {
@@ -43,7 +44,7 @@ class DaprTest extends TestCase
 
     private function getMap(): Map
     {
-        return new Map($this->getName(), $this->stateManager, 'statestore', $this->serializer, $this->deserializer);
+        return new Map($this->getName(), $this->stateManager, 'statestore', $this->serializer, $this->deserializer, new NullLogger());
     }
 
     public function testSaveAndLoadValue()

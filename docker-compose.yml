@@ -39,6 +39,7 @@ services:
     build:
       dockerfile: images/php.Dockerfile
       context: .
+      target: final
     command: ["write","test"]
     network_mode: service:php-daprd
     depends_on:
@@ -48,7 +49,17 @@ services:
     build:
       dockerfile: images/php.Dockerfile
       context: .
+      target: final
     command: ["read","test"]
+    network_mode: service:php-daprd
+    depends_on:
+      - php-daprd
+  php-unit:
+    image: withinboredom/dhm-php-integration:unit
+    build:
+      dockerfile: images/php.Dockerfile
+      context: .
+      target: unit
     network_mode: service:php-daprd
     depends_on:
       - php-daprd
