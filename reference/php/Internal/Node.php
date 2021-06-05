@@ -3,6 +3,7 @@
 namespace DistributedHashMap\Internal;
 
 use Dapr\Deserialization\Attributes\ArrayOf;
+use Dapr\Serialization\Attributes\AlwaysObject;
 
 class Node
 {
@@ -13,8 +14,12 @@ class Node
      * @param KeyTrigger[] $triggers
      */
     public function __construct(
-        #[ArrayOf('string')] public array $items = [],
-        #[ArrayOf(KeyTrigger::class)] public array $triggers = []
+        #[ArrayOf('string')]
+        public array $items = [],
+
+        #[ArrayOf(KeyTrigger::class)]
+        #[AlwaysObject]
+        public array $triggers = []
     ) {
     }
 }

@@ -51,7 +51,7 @@ class Map implements MapInterface, ArrayAccess
     ) {
     }
 
-    public function subscribe(string $key, string $pubsubName, string $topic): void
+    public function subscribe(string $key, string $pubsubName, string $topic, array $metadata = []): void
     {
         $this->getHeaderAndMaybeRebuild();
         $bucket = $this->stateManager->load_state(
@@ -60,10 +60,10 @@ class Map implements MapInterface, ArrayAccess
             new Node(),
             consistency: new StrongFirstWrite()
         );
-        $bucket->etag ?? "-1";
+        $bucket->etag ??= "-1";
         $node = $this->getNodeFromItem($bucket);
 
-        $trigger = new KeyTrigger($pubsubName, $topic);
+        $trigger = new KeyTrigger($pubsubName, $topic, $metadata);
 
         if (isset($node->triggers[$key]) && $node->triggers[$key] == $trigger) {
             return;
@@ -233,7 +233,7 @@ class Map implements MapInterface, ArrayAccess
      * @param string $key The key to put
      * @param string $value The value to put
      */
-    private function putRaw(string $key, string $value, KeyTrigger|null $subscribe): TriggerEvent|null
+    private function putRaw(string $key, string $value, KeyTrigger|null $subscribe): array
     {
         $header         = $this->getHeaderAndMaybeRebuild();
         $bucket_key     = $this->getBucketKey($key);
@@ -247,7 +247,7 @@ class Map implements MapInterface, ArrayAccess
         $node           = $this->getNodeFromItem($nodeItem);
 
         if ((isset($node->items[$key]) && $node->items[$key] === $value) && (empty($subscribe) || (isset($node->triggers[$key]) && $node->triggers[$key] == $subscribe))) {
-            return null;
+            return ['trigger' => null, 'metadata' => []];
         }
 
         if ($subscribe) {
@@ -263,10 +263,10 @@ class Map implements MapInterface, ArrayAccess
         }
 
         if ($subscribe || ($trigger = $node->triggers[$key] ?? null) === null) {
-            return null;
+            return ['trigger' => null, 'metadata' => []];
         }
 
-        return new TriggerEvent($key, $this->name, $previousValue, $value, $trigger->pubsubName, $trigger->topic);
+        return ['trigger' => new TriggerEvent($key, $this->name, $previousValue, $value, $trigger->pubsubName, $trigger->topic), 'metadata' => $trigger->metadata];
     }
 
     /**
@@ -397,7 +397,7 @@ class Map implements MapInterface, ArrayAccess
         $retries = 100;
         do {
             try {
-                $trigger = $this->putRaw($key, $value, null);
+                ['trigger' => $trigger, 'metadata' => $metadata] = $this->putRaw($key, $value, null);
                 $retries = 0;
             } catch (DaprException) {
                 $retries--;
@@ -405,14 +405,14 @@ class Map implements MapInterface, ArrayAccess
         } while ($retries > 0);
 
         if ( ! empty($trigger)) {
-            $this->broadcast($trigger);
+            $this->broadcast($trigger, $metadata);
         }
     }
 
-    private function broadcast(TriggerEvent $trigger)
+    private function broadcast(TriggerEvent $trigger, array $metadata)
     {
         $topic = new Topic($trigger->pubsubName, $trigger->topic, DaprClient::get_client(), $this->logger);
-        $topic->publish($trigger);
+        $topic->publish($trigger, $metadata);
     }
 
     /**
@@ -455,7 +455,8 @@ class Map implements MapInterface, ArrayAccess
                             null,
                             $node->triggers[$key]->pubsubName,
                             $node->triggers[$key]->topic
-                        )
+                        ),
+                        $node->triggers[$key]->metadata
                     );
                 }
                 unset($node->items[$key]);

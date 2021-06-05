@@ -14,7 +14,7 @@ interface MapInterface
 
     public function rebuild(): void;
 
-    public function subscribe(string $key, string $pubsubName, string $topic): void;
+    public function subscribe(string $key, string $pubsubName, string $topic, array $metadata = []): void;
 
     public function unsubscribe(string $key): void;
 }
