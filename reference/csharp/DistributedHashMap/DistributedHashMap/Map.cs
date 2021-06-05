@@ -223,7 +223,7 @@ namespace DistributedHashMap
                var status = await PutRaw(key, serializedValue, cancellationToken: cancellationToken);
                if (status.Item1 != null)
                {
-                   await _client.PublishEventAsync(status.Item1.PubSubName, status.Item1.Topic, status.Item1, status.Item3,
+                   await _client.PublishEventAsync(status.Item1.PubSubName, status.Item1.Topic, status.Item1, status.Item3 ?? new Dictionary<string, string>(),
                        cancellationToken);
                }
 
@@ -321,7 +321,7 @@ namespace DistributedHashMap
             {
                 case true when subscribe != null:
                     await _client.PublishEventAsync(subscribe.PubSubName, subscribe.Topic,
-                        new TriggerEvent(key, Name, prevValue, null, subscribe.PubSubName, subscribe.Topic), cancellationToken);
+                        new TriggerEvent(key, Name, prevValue, null, subscribe.PubSubName, subscribe.Topic), subscribe.Metadata ?? new Dictionary<string, string>(), cancellationToken);
                     break;
                 case false:
                     await Remove(key, cancellationToken);
