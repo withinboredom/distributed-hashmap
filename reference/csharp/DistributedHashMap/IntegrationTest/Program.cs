@@ -15,8 +15,12 @@ namespace IntegrationTest
         {
             if (args.Length > 0)
             {
+                var delete = false;
                 switch (args[0])
                 {
+                    case "delete":
+                        delete = true;
+                        goto case "write";
                     case "write":
                         var seed = Guid.NewGuid().ToString();
                         if (args.Length > 1)
@@ -30,9 +34,14 @@ namespace IntegrationTest
 
                         Func<int, Map, Task> writer = async (int message, Map map) =>
                         {
-                            await map.Put("c# " + message, message);
+                            if (!delete)
+                            {
+                                await map.Subscribe("c# " + message, "pubsub", "c#");
+                                await map.Put("c# " + message, message);
+                            }
+                            else await map.Remove("c# " + message);
                             var every = (int)Math.Round(NumberMessages * 0.1f);
-                            if(++writtenMessages % every == 0) Console.WriteLine($"Written {writtenMessages} messages.");
+                            if (++writtenMessages % every == 0) Console.WriteLine($"Written {writtenMessages} messages.");
                         };
                         var client = new DaprClientBuilder().UseGrpcEndpoint("http://localhost:50001").Build();
 
@@ -46,14 +55,16 @@ namespace IntegrationTest
                             var map = new Map("c#" + seed, "statestore", client);
                             map.IsRebuilding += (sender, b) =>
                             {
-                                if (b && !rebuildingStopwatch.IsRunning)
+                                switch (b)
                                 {
-                                    rebuildingStopwatch.Start();
-                                    Console.Write("Rebuilding... ");
-                                } else if (!b && rebuildingStopwatch.IsRunning)
-                                {
-                                    rebuildingStopwatch.Stop();
-                                    Console.WriteLine($"completed in {rebuildingStopwatch.Elapsed.TotalSeconds:N2} seconds.");
+                                    case true when !rebuildingStopwatch.IsRunning:
+                                        rebuildingStopwatch.Start();
+                                        Console.Write("Rebuilding... ");
+                                        break;
+                                    case false when rebuildingStopwatch.IsRunning:
+                                        rebuildingStopwatch.Stop();
+                                        Console.WriteLine($"completed in {rebuildingStopwatch.Elapsed.TotalSeconds:N2} seconds.");
+                                        break;
                                 }
                             };
                             writer(i, map).Wait();
@@ -76,7 +87,7 @@ namespace IntegrationTest
                         }
                         stopwatch.Stop();
                         Console.WriteLine($"verified in {stopwatch.Elapsed.TotalSeconds:N2} seconds!");
-                        
+
                         return 0;
                     case "read":
                         seed = Guid.NewGuid().ToString();
@@ -85,7 +96,7 @@ namespace IntegrationTest
                             seed = args[1];
                         }
 
-                        var langs = new List<string> {"c#", "php"};
+                        var langs = new List<string> { "c#", "php" };
                         client = new DaprClientBuilder().UseGrpcEndpoint("http://localhost:50001").Build();
 
                         foreach (var lang in langs)
@@ -97,11 +108,11 @@ namespace IntegrationTest
                             for (var i = 0; i < NumberMessages; i++)
                             {
                                 var verification = await map.Get<int>($"{lang} {i}");
-                                if (verification != i)
-                                {
-                                    Console.WriteLine($"Failed read verification for {lang} and got {verification} instead of {i}");
-                                    return 1;
-                                }
+                                var contains = await map.Contains($"{lang} {i}");
+                                if (verification == i && contains) continue;
+
+                                Console.WriteLine($"Failed read verification for {lang} and got {verification} instead of {i}");
+                                return 1;
                             }
                             stopwatch.Stop();
                             Console.WriteLine($"Done in {stopwatch.Elapsed.TotalSeconds} seconds");
