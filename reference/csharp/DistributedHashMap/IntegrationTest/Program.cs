@@ -79,11 +79,10 @@ namespace IntegrationTest
                         for (var i = 0; i < NumberMessages; i++)
                         {
                             var verification = await map.Get<int>("c# " + i);
-                            if (verification != i)
-                            {
-                                Console.WriteLine($"failed. (got {verification} and expecting {i})");
-                                return 1;
-                            }
+                            if (verification == i) continue;
+                            
+                            Console.WriteLine($"failed. (got {verification} and expecting {i})");
+                            return 1;
                         }
                         stopwatch.Stop();
                         Console.WriteLine($"verified in {stopwatch.Elapsed.TotalSeconds:N2} seconds!");
@@ -111,7 +110,7 @@ namespace IntegrationTest
                                 var contains = await map.Contains($"{lang} {i}");
                                 if (verification == i && contains) continue;
 
-                                Console.WriteLine($"Failed read verification for {lang} and got {verification} instead of {i}");
+                                Console.WriteLine($"Failed read verification for {lang}: got {verification} and expected {i}, {(contains ? "contained in map" : "not contained in map")}");
                                 return 1;
                             }
                             stopwatch.Stop();
