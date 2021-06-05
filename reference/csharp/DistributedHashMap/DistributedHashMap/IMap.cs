@@ -63,9 +63,11 @@ namespace DistributedHashMap
         /// <param name="key">The key to subscribe to</param>
         /// <param name="pubSubName">The pubsub to broadcast the change to</param>
         /// <param name="topic">The topic to broadcast the change to</param>
+        /// <param name="metadata"></param>
         /// <param name="cancellationToken"></param>
         /// <returns></returns>
-        public Task Subscribe(string key, string pubSubName, string topic, CancellationToken cancellationToken = default);
+        public Task Subscribe(string key, string pubSubName, string topic, Dictionary<string, string>? metadata = null,
+            CancellationToken cancellationToken = default);
 
         /// <summary>
         /// Unsubscribe from key changes

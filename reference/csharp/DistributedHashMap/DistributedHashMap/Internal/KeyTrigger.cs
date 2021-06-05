@@ -9,10 +9,11 @@ namespace DistributedHashMap.Internal
 {
     internal class KeyTrigger
     {
-        public KeyTrigger(string pubSubName, string topic)
+        public KeyTrigger(string pubSubName, string topic, Dictionary<string, string>? metadata)
         {
             PubSubName = pubSubName;
             Topic = topic;
+            Metadata = metadata;
         }
 
         [JsonPropertyName("pubsubName")]
@@ -22,6 +23,6 @@ namespace DistributedHashMap.Internal
         public string Topic { get; set; }
 
         [JsonPropertyName("metadata")]
-        public Dictionary<string, string> Metadata { get; set; }
+        public Dictionary<string, string>? Metadata { get; set; }
     }
 }

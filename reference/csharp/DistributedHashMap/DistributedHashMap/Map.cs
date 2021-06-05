@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -159,7 +160,7 @@ namespace DistributedHashMap
         /// <param name="serializedValue"></param>
         /// <param name="cancellationToken"></param>
         /// <returns></returns>
-        private async Task<(TriggerEvent?, bool)> PutRaw(string key, string serializedValue, KeyTrigger? subscribe = null, CancellationToken cancellationToken = default)
+        private async Task<(TriggerEvent?, bool, Dictionary<string, string>?)> PutRaw(string key, string serializedValue, KeyTrigger? subscribe = null, CancellationToken cancellationToken = default)
         {
             var header = await GetHeaderAndMaybeRebuild(cancellationToken);
             var bucketKey = GetBucketKey(key);
@@ -178,7 +179,7 @@ namespace DistributedHashMap
 
             if ((nodeItem.node.Items.ContainsKey(key) && nodeItem.node.Items[key] == serializedValue) && subscribe == null)
             {
-                return (null, true);
+                return (null, true, null);
             }
 
             nodeItem.node.Items.TryGetValue(key, out var prevValue);
@@ -199,13 +200,11 @@ namespace DistributedHashMap
                     subscribe.Topic);
 
                 if (nodeItem.node.Items.Count > header.MaxLoad) await Rebuild(cancellationToken);
-                return (triggerEvent, saved);
+                return (triggerEvent, saved, subscribe.Metadata);
             }
-            else
-            {
-                if (nodeItem.node.Items.Count > header.MaxLoad) await Rebuild(cancellationToken);
-                return (null, saved);
-            }
+
+            if (nodeItem.node.Items.Count > header.MaxLoad) await Rebuild(cancellationToken);
+            return (null, saved, null);
         }
 
         /// <summary>
@@ -224,7 +223,7 @@ namespace DistributedHashMap
                var status = await PutRaw(key, serializedValue, cancellationToken: cancellationToken);
                if (status.Item1 != null)
                {
-                   await _client.PublishEventAsync(status.Item1.PubSubName, status.Item1.Topic, status.Item1,
+                   await _client.PublishEventAsync(status.Item1.PubSubName, status.Item1.Topic, status.Item1, status.Item3,
                        cancellationToken);
                }
 
@@ -397,9 +396,10 @@ namespace DistributedHashMap
         /// <param name="key">The key to subscribe to</param>
         /// <param name="pubSubName">The pubsub to broadcast the change to</param>
         /// <param name="topic">The topic to broadcast the change to</param>
+        /// <param name="metadata"></param>
         /// <param name="cancellationToken"></param>
         /// <returns></returns>
-        public async Task Subscribe(string key, string pubSubName, string topic,
+        public async Task Subscribe(string key, string pubSubName, string topic, Dictionary<string, string>? metadata = null,
             CancellationToken cancellationToken = default)
         {
             await GetHeaderAndMaybeRebuild(cancellationToken);
@@ -416,7 +416,7 @@ namespace DistributedHashMap
             bucket.etag = bucket.etag == string.Empty ? "-1" : bucket.etag;
             bucket.node ??= new Node();
 
-            bucket.node.Triggers[key] = new KeyTrigger(pubSubName, topic);
+            bucket.node.Triggers[key] = new KeyTrigger(pubSubName, topic, metadata);
             await DoRetry(() => _client.TrySaveStateAsync(_storeName, bucketKey, bucket.node, bucket.etag,
                 DefaultStateOptions, cancellationToken: cancellationToken), cancellationToken);
         }
