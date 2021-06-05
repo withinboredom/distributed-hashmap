@@ -18,7 +18,7 @@ if ( ! isset($argv[1])) {
 
 const NUMBER_MESSAGES = 2000;
 
-function fork_and_run($message, $serializer, $deserializer, $stateManager, $seed)
+function fork_and_run($message, $serializer, $deserializer, $stateManager, $seed, $delete = false)
 {
     $pid = pcntl_fork();
     switch ($pid) {
@@ -35,7 +35,11 @@ function fork_and_run($message, $serializer, $deserializer, $stateManager, $seed
                 new NullLogger(),
             //expectedCapacity: NUMBER_MESSAGES
             );
-            $map->put('php '.$message, $message);
+            if(!$delete) {
+                $map->put('php '.$message, $message);
+            } else {
+                $map->remove('php '.$message);
+            }
             exit();
         default:
             return $pid;
@@ -81,7 +85,8 @@ switch ($argv[1]) {
             $start_time = microtime(true);
             for ($i = 0; $i < NUMBER_MESSAGES; $i++) {
                 $verification = $map->get("$lang $i", 'int');
-                if ($i !== $verification) {
+                $contains = $map->contains("$lang $i");
+                if ($i !== $verification || !$contains) {
                     echo "Failed read verification for $lang and got $verification instead of $i\n";
                     exit(1);
                 }
@@ -91,6 +96,8 @@ switch ($argv[1]) {
         }
 
         break;
+    case 'delete':
+        $delete = true;
     case 'write':
         $seed = uniqid();
         if (isset($argv[2])) {
@@ -121,7 +128,7 @@ switch ($argv[1]) {
         $pids       = [];
         $start_time = microtime(true);
         for ($i = 0; $i < NUMBER_MESSAGES; $i++) {
-            $pids[] = fork_and_run($i, $serializer, $deserializer, $stateManager, $seed);
+            $pids[] = fork_and_run($i, $serializer, $deserializer, $stateManager, $seed, delete: $delete ?? false);
             waiting:
             if (count($pids) >= $number_threads) {
                 $wait = array_shift($pids);
