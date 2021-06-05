@@ -36,6 +36,7 @@ function fork_and_run($message, $serializer, $deserializer, $stateManager, $seed
             //expectedCapacity: NUMBER_MESSAGES
             );
             if(!$delete) {
+                $map->subscribe('php '.$message, 'pubsub', 'changes');
                 $map->put('php '.$message, $message);
             } else {
                 $map->remove('php '.$message);
