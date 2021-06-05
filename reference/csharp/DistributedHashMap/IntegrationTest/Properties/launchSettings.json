@@ -2,7 +2,7 @@
   "profiles": {
     "IntegrationTest": {
       "commandName": "Project",
-      "commandLineArgs": "write test"
+      "commandLineArgs": "read test"
     },
     "Docker": {
       "commandName": "Docker"
