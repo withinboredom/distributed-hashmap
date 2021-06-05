@@ -36,7 +36,7 @@ namespace IntegrationTest
                         {
                             if (!delete)
                             {
-                                await map.Subscribe("c# " + message, "pubsub", "c#");
+                                await map.Subscribe("c# " + message, "pubsub", "changes");
                                 await map.Put("c# " + message, message);
                             }
                             else await map.Remove("c# " + message);
