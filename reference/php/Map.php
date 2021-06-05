@@ -266,7 +266,7 @@ class Map implements MapInterface, ArrayAccess
             return ['trigger' => null, 'metadata' => []];
         }
 
-        return ['trigger' => new TriggerEvent($key, $this->name, $previousValue, $value, $trigger->pubsubName, $trigger->topic), 'metadata' => $trigger->metadata];
+        return ['trigger' => new TriggerEvent($key, $this->name, $previousValue, $value, $trigger->pubsubName, $trigger->topic), 'metadata' => $trigger->metadata ?? []];
     }
 
     /**
