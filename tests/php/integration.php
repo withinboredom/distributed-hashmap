@@ -21,6 +21,12 @@ const NUMBER_MESSAGES = 2000;
 function fork_and_run($message, $serializer, $deserializer, $stateManager, $seed, $delete = false)
 {
     $pid = pcntl_fork();
+    set_error_handler(
+        function ($err_no, $err_str, $err_file, $err_line) {
+            echo "ERROR: $err_str in $err_file:$err_line";
+            exit(1);
+        }
+    );
     switch ($pid) {
         case -1:
             echo "Unable to fork!\n";
@@ -35,9 +41,22 @@ function fork_and_run($message, $serializer, $deserializer, $stateManager, $seed
                 new NullLogger(),
             //expectedCapacity: NUMBER_MESSAGES
             );
-            if(!$delete) {
-                $map->subscribe('php '.$message, 'pubsub', 'changes');
-                $map->put('php '.$message, $message);
+            if ( ! $delete) {
+                //echo "Subscribing to $message...";
+                try {
+                    $map->subscribe('php '.$message, 'pubsub', 'changes');
+                } catch (\Throwable $exception) {
+                    echo "Failed to subscribe due to {$exception->getMessage()}\n";
+                    throw $exception;
+                }
+                //echo "done\nPutting $message...";
+                try {
+                    $map->put('php '.$message, $message);
+                } catch (\Throwable $exception) {
+                    echo "Failed to put due to {$exception->getMessage()}\n";
+                    throw $exception;
+                }
+                //echo "done with $message\n";
             } else {
                 $map->remove('php '.$message);
             }
@@ -48,6 +67,13 @@ function fork_and_run($message, $serializer, $deserializer, $stateManager, $seed
 }
 
 switch ($argv[1]) {
+    case 'validate':
+        foreach (['c#', 'php'] as $lang) {
+            $lang = rawurlencode($lang);
+            $stats = json_decode(file_get_contents("http://localhost/stats/$lang"));
+            var_dump($stats);
+        }
+        break;
     case 'read':
         $seed = uniqid();
         if (isset($argv[2])) {
@@ -86,8 +112,8 @@ switch ($argv[1]) {
             $start_time = microtime(true);
             for ($i = 0; $i < NUMBER_MESSAGES; $i++) {
                 $verification = $map->get("$lang $i", 'int');
-                $contains = $map->contains("$lang $i");
-                if ($i !== $verification || !$contains) {
+                $contains     = $map->contains("$lang $i");
+                if ($i !== $verification || ! $contains) {
                     echo "Failed read verification for $lang and got $verification instead of $i\n";
                     exit(1);
                 }

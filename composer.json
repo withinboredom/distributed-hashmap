@@ -22,7 +22,8 @@
   },
   "autoload-dev": {
     "psr-4": {
-      "DistributedHashMap\\Test\\": "tests/php"
+      "DistributedHashMap\\Test\\": "tests/php",
+      "DistributedHashMap\\Subscriptions\\": "tests/subscriptions"
     }
   },
   "require-dev": {

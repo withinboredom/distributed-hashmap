@@ -29,7 +29,7 @@ services:
       - csharp-daprd
   php-daprd:
     image: daprio/daprd:1.2.0-rc.5
-    command: [ "./daprd","-app-id","tests","-placement-host-address","placement:50006","-components-path","/components" ]
+    command: [ "./daprd","-app-id","tests","-placement-host-address","placement:50006","-components-path","/components","-app-port","80" ]
     volumes:
       - ./components:/components
     depends_on:
@@ -40,7 +40,17 @@ services:
       dockerfile: images/php.Dockerfile
       context: .
       target: final
-    command: ["write","test"]
+    command: [ "write","test" ]
+    network_mode: service:php-daprd
+    depends_on:
+      - php-daprd
+  php-sub-validator:
+    image: withinboredom/dhm-sub-integration:checker
+    build:
+      dockerfile: images/php.Dockerfile
+      context: .
+      target: final
+    command: [ "validate" ]
     network_mode: service:php-daprd
     depends_on:
       - php-daprd
@@ -63,3 +73,15 @@ services:
     network_mode: service:php-daprd
     depends_on:
       - php-daprd
+  subscriptions:
+    image: withinboredom/dhm-sub-integration:service
+    build:
+      dockerfile: images/php.Dockerfile
+      context: .
+      target: unit
+    network_mode: service:php-daprd
+    depends_on:
+      - php-daprd
+    environment:
+      PHP_CLI_SERVER_WORKERS: "100"
+    entrypoint: ["php","-S","0.0.0.0:80","tests/subscriptions/service.php"]

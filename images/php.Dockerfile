@@ -1,4 +1,5 @@
 FROM php:8-cli AS final
+RUN mv "$PHP_INI_DIR/php.ini-production" "$PHP_INI_DIR/php.ini"
 COPY --from=mlocati/php-extension-installer /usr/bin/install-php-extensions /usr/local/bin/
 RUN apt-get update && apt-get install -y wget git unzip && apt-get clean && rm -rf /var/cache/apt/lists
 RUN install-php-extensions curl intl pcntl posix zip sodium @composer && mkdir -p /app
