@@ -31,6 +31,9 @@ $app->post(
         $created = $event->data['previousValue'] === null;
         $deleted = $event->data['newValue'] === null;
         $changed = $created ? 'created' : ($deleted ? 'deleted' : 'changed');
+        if(!is_dir("/tmp/$lang/$changed")) {
+            @mkdir("/tmp/$lang/$changed");
+        }
         touch("/tmp/$lang/$changed/$key");
     }
 );

@@ -68,10 +68,15 @@ function fork_and_run($message, $serializer, $deserializer, $stateManager, $seed
 
 switch ($argv[1]) {
     case 'validate':
-        foreach (['c#', 'php'] as $lang) {
-            $lang = rawurlencode($lang);
-            $stats = json_decode(file_get_contents("http://localhost/stats/$lang"));
-            var_dump($stats);
+        foreach (['php', 'c#'] as $lang) {
+            $lang_encoded = rawurlencode($lang);
+            $total        = number_format(NUMBER_MESSAGES, 0);
+            $stats        = json_decode(file_get_contents("http://localhost/stats/$lang_encoded"), true);
+            $created      = number_format($stats['created'] ?? 0, 0);
+            if ($created !== $total) {
+                echo "$lang broadcast $created events and expected $total\n";
+                exit(1);
+            }
         }
         break;
     case 'read':
