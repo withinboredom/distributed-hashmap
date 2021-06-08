@@ -4,7 +4,7 @@
     <TargetFramework>net5.0</TargetFramework>
     <Nullable>enable</Nullable>
     <Platforms>AnyCPU;x64;x86</Platforms>
-    <Version>0.0.2</Version>
+    <Version>0.1.0</Version>
     <GeneratePackageOnBuild>true</GeneratePackageOnBuild>
     <Authors>withinboredom</Authors>
     <Company />
@@ -13,7 +13,7 @@
     <PackageProjectUrl>https://github.com/withinboredom/distributed-hashmap</PackageProjectUrl>
     <RepositoryUrl>https://github.com/withinboredom/distributed-hashmap</RepositoryUrl>
     <PackageTags>dapr</PackageTags>
-    <PackageReleaseNotes>Add documentation blocks</PackageReleaseNotes>
+    <PackageReleaseNotes>Add subscriptions!</PackageReleaseNotes>
   </PropertyGroup>
 
   <ItemGroup>
