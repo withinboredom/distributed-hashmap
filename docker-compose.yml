@@ -3,7 +3,7 @@ services:
   redis:
     image: redis
   csharp-daprd:
-    image: daprio/daprd:1.2.0-rc.5
+    image: daprio/daprd:1.2.0
     command: [ "./daprd","-app-id","tests","-placement-host-address","placement:50006","-components-path","/components" ]
     volumes:
       - ./components:/components
@@ -28,8 +28,8 @@ services:
     depends_on:
       - csharp-daprd
   php-daprd:
-    image: daprio/daprd:1.2.0-rc.5
-    command: [ "./daprd","-app-id","tests","-placement-host-address","placement:50006","-components-path","/components" ]
+    image: daprio/daprd:1.2.0
+    command: [ "./daprd","-app-id","tests","-placement-host-address","placement:50006","-components-path","/components","-app-port","80" ]
     volumes:
       - ./components:/components
     depends_on:
@@ -39,7 +39,18 @@ services:
     build:
       dockerfile: images/php.Dockerfile
       context: .
-    command: ["write","test"]
+      target: final
+    command: [ "write","test" ]
+    network_mode: service:php-daprd
+    depends_on:
+      - php-daprd
+  php-sub-validator:
+    image: withinboredom/dhm-sub-integration:checker
+    build:
+      dockerfile: images/php.Dockerfile
+      context: .
+      target: final
+    command: [ "validate" ]
     network_mode: service:php-daprd
     depends_on:
       - php-daprd
@@ -48,7 +59,25 @@ services:
     build:
       dockerfile: images/php.Dockerfile
       context: .
+      target: final
     command: ["read","test"]
+    network_mode: service:php-daprd
+    depends_on:
+      - php-daprd
+  php-unit:
+    image: withinboredom/dhm-php-integration:unit
+    build:
+      dockerfile: images/php.Dockerfile
+      context: .
+      target: unit
+    network_mode: service:php-daprd
+    depends_on:
+      - php-daprd
+  subscriptions:
+    image: withinboredom/dhm-sub-integration:service
+    build:
+      dockerfile: images/subscriptions.Dockerfile
+      context: .
     network_mode: service:php-daprd
     depends_on:
       - php-daprd

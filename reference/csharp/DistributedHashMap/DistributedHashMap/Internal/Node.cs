@@ -9,5 +9,8 @@ namespace DistributedHashMap.Internal
     {
         [JsonPropertyName("items")]
         public Dictionary<string, string> Items { get; set; } = new Dictionary<string, string>();
+
+        [JsonPropertyName("triggers")]
+        public Dictionary<string, KeyTrigger> Triggers { get; set; } = new Dictionary<string, KeyTrigger>();
     }
 }

@@ -9,6 +9,7 @@ use Dapr\Deserialization\IDeserializer;
 use Dapr\Serialization\ISerializer;
 use Dapr\State\StateManager;
 use DistributedHashMap\Map;
+use Psr\Log\NullLogger;
 
 if ( ! isset($argv[1])) {
     echo "usage: integration.php [write|read]";
@@ -17,9 +18,17 @@ if ( ! isset($argv[1])) {
 
 const NUMBER_MESSAGES = 2000;
 
-function fork_and_run($message, $serializer, $deserializer, $stateManager, $seed)
+
+
+function fork_and_run($message, $serializer, $deserializer, $stateManager, $seed, $delete = false)
 {
     $pid = pcntl_fork();
+    set_error_handler(
+        function ($err_no, $err_str, $err_file, $err_line) {
+            echo "ERROR: $err_str in $err_file:$err_line";
+            exit(1);
+        }
+    );
     switch ($pid) {
         case -1:
             echo "Unable to fork!\n";
@@ -31,9 +40,36 @@ function fork_and_run($message, $serializer, $deserializer, $stateManager, $seed
                 'statestore',
                 $serializer,
                 $deserializer,
+                new NullLogger(),
             //expectedCapacity: NUMBER_MESSAGES
             );
-            $map->put('php '.$message, $message);
+            if ( ! $delete) {
+                //echo "Subscribing to $message...";
+                try {
+                    $map->rebuildCallback = fn($status, $reason) => match ($status) {
+                        'init' => print("Rebuilding (subscribe) at $message: $reason\n"),
+                        'finish' => print("Finished (subscribe) at $message: $reason\n")
+                    };
+                    $map->subscribe('php '.$message, 'pubsub', 'changes');
+                } catch (\Throwable $exception) {
+                    echo "Failed to subscribe due to {$exception->getMessage()}\n";
+                    throw $exception;
+                }
+                //echo "done\nPutting $message...";
+                try {
+                    $map->rebuildCallback = fn($status, $reason) => match ($status) {
+                        'init' => print("Rebuilding (put) at $message: $reason\n"),
+                        'finish' => print("Finished (put) at $message: $reason\n")
+                    };
+                    $map->put('php '.$message, $message);
+                } catch (\Throwable $exception) {
+                    echo "Failed to put due to {$exception->getMessage()}\n";
+                    throw $exception;
+                }
+                //echo "done with $message\n";
+            } else {
+                $map->remove('php '.$message);
+            }
             exit();
         default:
             return $pid;
@@ -41,6 +77,28 @@ function fork_and_run($message, $serializer, $deserializer, $stateManager, $seed
 }
 
 switch ($argv[1]) {
+    case 'validate':
+        $failed = false;
+        foreach (['c#', 'php'] as $lang) {
+            $lang_encoded = rawurlencode($lang);
+            $total        = number_format(NUMBER_MESSAGES, 0);
+            $stats        = json_decode(file_get_contents("http://localhost/stats/$lang_encoded"), true);
+            $created      = number_format($stats['createdCount'] ?? 0, 0);
+            $dupes = number_format($stats['createdDupeCount'] ?? 0, 0);
+            if ($created !== $total) {
+                echo "$lang broadcast $created events and expected $total\n";
+                $failed = true;
+            }
+            elseif($dupes) {
+                echo "$lang broadcast $dupes duplicate events, expected 0\n";
+                $failed = true;
+            }
+            else {
+                echo "$lang broadcast $created events with no duplicates\n";
+            }
+        }
+        exit((int) $failed);
+        break;
     case 'read':
         $seed = uniqid();
         if (isset($argv[2])) {
@@ -72,13 +130,15 @@ switch ($argv[1]) {
                 'statestore',
                 $serializer,
                 $deserializer,
+                new NullLogger(),
             //expectedCapacity: NUMBER_MESSAGES
             );
             echo "Verifying $lang: ";
             $start_time = microtime(true);
             for ($i = 0; $i < NUMBER_MESSAGES; $i++) {
                 $verification = $map->get("$lang $i", 'int');
-                if ($i !== $verification) {
+                $contains     = $map->contains("$lang $i");
+                if ($i !== $verification || ! $contains) {
                     echo "Failed read verification for $lang and got $verification instead of $i\n";
                     exit(1);
                 }
@@ -88,6 +148,8 @@ switch ($argv[1]) {
         }
 
         break;
+    case 'delete':
+        $delete = true;
     case 'write':
         $seed = uniqid();
         if (isset($argv[2])) {
@@ -118,7 +180,7 @@ switch ($argv[1]) {
         $pids       = [];
         $start_time = microtime(true);
         for ($i = 0; $i < NUMBER_MESSAGES; $i++) {
-            $pids[] = fork_and_run($i, $serializer, $deserializer, $stateManager, $seed);
+            $pids[] = fork_and_run($i, $serializer, $deserializer, $stateManager, $seed, delete: $delete ?? false);
             waiting:
             if (count($pids) >= $number_threads) {
                 $wait = array_shift($pids);
@@ -159,7 +221,8 @@ switch ($argv[1]) {
             $stateManager,
             'statestore',
             $serializer,
-            $deserializer
+            $deserializer,
+            new NullLogger(),
         );
 
         $start_time = microtime(true);

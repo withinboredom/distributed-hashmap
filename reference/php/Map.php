@@ -2,23 +2,30 @@
 
 namespace DistributedHashMap;
 
+use ArrayAccess;
 use Dapr\consistency\StrongFirstWrite;
+use Dapr\DaprClient;
 use Dapr\Deserialization\IDeserializer;
 use Dapr\exceptions\DaprException;
+use Dapr\PubSub\Topic;
 use Dapr\Serialization\ISerializer;
 use Dapr\State\IManageState;
 use Dapr\State\StateItem;
 use DistributedHashMap\Internal\Header;
+use DistributedHashMap\Internal\KeyTrigger;
 use DistributedHashMap\Internal\MapInterface;
 use DistributedHashMap\Internal\Node;
+use JetBrains\PhpStorm\Pure;
 use lastguest\Murmur;
+use Psr\Log\LoggerInterface;
 
 /**
  * Class Map
  * @package DistributedHashMap
  */
-class Map implements MapInterface, \ArrayAccess
+class Map implements MapInterface, ArrayAccess
 {
+    public mixed $rebuildCallback = null;
     /**
      * @var StateItem The cached header for operations
      */
@@ -39,38 +46,30 @@ class Map implements MapInterface, \ArrayAccess
         private string $storeName,
         private ISerializer $serializer,
         private IDeserializer $deserializer,
+        private LoggerInterface $logger,
         private int $expectedCapacity = 256,
         private int $maxLoad = 12
     ) {
     }
 
     /**
-     * @inheritDoc
+     * @throws DaprException
      */
-    public function offsetExists($offset): bool
-    {
-        return $this->contains($offset);
-    }
-
-    /**
-     * Whether the hashmap contains a key
-     *
-     * @param string $key The key to check
-     *
-     * @return bool True if it exists (including null)
-     */
-    public function contains(string $key): bool
+    public function subscribe(string $key, string $pubsubName, string $topic, array $metadata = []): void
     {
         $this->getHeaderAndMaybeRebuild();
-        $bucket = $this->stateManager->load_state(
-            $this->storeName,
-            rawurlencode($this->getBucketKey($key)),
-            new Node(),
-            consistency: new StrongFirstWrite()
-        );
+        $bucket = $this->readBucketFor($key);
         $node   = $this->getNodeFromItem($bucket);
 
-        return array_key_exists($key, $node->items);
+        $trigger = new KeyTrigger($pubsubName, $topic, $metadata);
+
+        if (isset($node->triggers[$key]) && $node->triggers[$key] == $trigger) {
+            return;
+        }
+
+        $node->triggers[$key] = $trigger;
+
+        $this->writeBucket($bucket, fn() => $this->subscribe($key, $pubsubName, $topic, $metadata));
     }
 
     /**
@@ -86,7 +85,7 @@ class Map implements MapInterface, \ArrayAccess
 
         $header = $this->getHeaderFromStore();
         if ($header->rebuilding) {
-            $this->rebuild();
+            $this->rebuild('joining rebuild');
 
             return $this->getHeaderFromStore();
         }
@@ -133,7 +132,7 @@ class Map implements MapInterface, \ArrayAccess
         return $this->header->value;
     }
 
-    private function getDefaultHeader()
+    #[Pure] private function getDefaultHeader(): Header
     {
         return new Header(
             generation: ceil(log(max(256, $this->expectedCapacity)) / log(2)) - 7, maxLoad: $this->maxLoad
@@ -143,12 +142,21 @@ class Map implements MapInterface, \ArrayAccess
     /**
      * Participate or start a rebuild of the next generation
      */
-    public function rebuild(): void
+    public function rebuild($reason = 'manual'): void
     {
         $header = $this->getHeaderFromHeader();
         if ( ! $header->rebuilding) {
+            if (is_callable($this->rebuildCallback)) {
+                $cb = $this->rebuildCallback;
+                $cb('init', $reason);
+            }
             $this->header->value->rebuilding = true;
-            $this->stateManager->save_state($this->storeName, $this->header);
+            try {
+                $this->stateManager->save_state($this->storeName, $this->header);
+            } catch (DaprException) {
+                // someone else beat us to updating the header. So we'll have to rebuild later
+                return;
+            }
         }
         $nextGenerationHeader = clone $header;
         $nextGenerationHeader->generation++;
@@ -159,6 +167,7 @@ class Map implements MapInterface, \ArrayAccess
             $this->storeName,
             $this->serializer,
             $this->deserializer,
+            $this->logger,
             $this->expectedCapacity,
             $this->maxLoad
         );
@@ -166,18 +175,31 @@ class Map implements MapInterface, \ArrayAccess
         $nextGeneration->header->value = $nextGenerationHeader;
 
         do {
-            $bucket = $this->stateManager->load_state(
+            $bucket   = $this->stateManager->load_state(
                 $this->storeName,
                 rawurlencode('DHM_'.$this->name.'_'.$this->getHeaderFromHeader()->generation.'_'.$pointer),
                 default_value: new Node(),
                 consistency: new StrongFirstWrite()
             );
-            $node   = $this->getNodeFromItem($bucket);
+            $node     = $this->getNodeFromItem($bucket);
+            $triggers = $node->triggers;
             foreach ($node->items as $key => $value) {
                 $retries = 100;
                 do {
                     try {
-                        $nextGeneration->putRaw($key, $value);
+                        $nextGeneration->putRaw($key, $value, $triggers[$key] ?? null);
+                        unset($triggers[$key]);
+                        $retries = 0;
+                    } catch (DaprException) {
+                        $retries--;
+                    }
+                } while ($retries > 0);
+            }
+            foreach ($triggers as $key => $trigger) {
+                $retries = 100;
+                do {
+                    try {
+                        $nextGeneration->subscribe($key, $trigger->pubsubName, $trigger->topic, $trigger->metadata);
                         $retries = 0;
                     } catch (DaprException) {
                         $retries--;
@@ -191,6 +213,10 @@ class Map implements MapInterface, \ArrayAccess
         $header->rebuilding = false;
         $header->generation++;
         $this->header->value = $header;
+        if (is_callable($this->rebuildCallback)) {
+            $cb = $this->rebuildCallback;
+            $cb('finish', $reason);
+        }
         try {
             $this->stateManager->save_state($this->storeName, $this->header);
         } catch (DaprException) {
@@ -204,7 +230,7 @@ class Map implements MapInterface, \ArrayAccess
      *
      * @return int The current size of the map
      */
-    private function getMapSize(): int
+    #[Pure] private function getMapSize(): int
     {
         return pow(2, 7 + $this->getHeaderFromHeader()->generation);
     }
@@ -230,28 +256,84 @@ class Map implements MapInterface, \ArrayAccess
      *
      * @param string $key The key to put
      * @param string $value The value to put
+     *
+     * @throws DaprException
      */
-    private function putRaw(string $key, string $value): void
+    private function putRaw(string $key, string $value, KeyTrigger|null $subscribe): array
     {
-        $header         = $this->getHeaderAndMaybeRebuild();
-        $bucket_key     = $this->getBucketKey($key);
-        $nodeItem       = $this->stateManager->load_state(
-            $this->storeName,
-            rawurlencode($bucket_key),
-            default_value: new Node(),
-            consistency: new StrongFirstWrite()
-        );
-        $nodeItem->etag ??= '-1';
-        $node           = $this->getNodeFromItem($nodeItem);
-        if (isset($node->items[$key]) && $node->items[$key] === $value) {
-            return;
+        $header = $this->getHeaderAndMaybeRebuild();
+        $bucket = $this->readBucketFor($key);
+
+        $node = $this->getNodeFromItem($bucket);
+
+        if ((isset($node->items[$key]) && $node->items[$key] === $value) && (empty($subscribe) || (isset($node->triggers[$key]) && $node->triggers[$key] == $subscribe))) {
+            return ['trigger' => null, 'metadata' => []];
         }
+
+        if ($subscribe) {
+            $node->triggers[$key] = $subscribe;
+        }
+
+        $previousValue     = $node->items[$key] ?? null;
         $node->items[$key] = $value;
-        $this->stateManager->save_state($this->storeName, $nodeItem);
+        $retried           = false;
+        $this->writeBucket(
+            $bucket,
+            function () use (&$retried, $key, $value, $subscribe) {
+                $retried = $this->putRaw($key, $value, $subscribe);
+            }
+        );
+        if ($retried) {
+            return $retried;
+        }
 
         if (count($node->items) > $header->maxLoad) {
-            $this->rebuild();
+            $this->rebuild('exceeded max load');
         }
+
+        if ($subscribe || ($trigger = $node->triggers[$key] ?? null) === null) {
+            return ['trigger' => null, 'metadata' => []];
+        }
+
+        return [
+            'trigger'  => new TriggerEvent(
+                $key,
+                $this->name,
+                $previousValue,
+                $value,
+                $trigger->pubsubName,
+                $trigger->topic
+            ),
+            'metadata' => $trigger->metadata ?? [],
+        ];
+    }
+
+    /**
+     * @throws DaprException
+     */
+    private function readBucketFor(string $key): StateItem
+    {
+        $bucket_key = $this->getBucketKey($key);
+
+        $retries = 0;
+        do {
+            try {
+                $bucket       = $this->stateManager->load_state(
+                    $this->storeName,
+                    rawurlencode($bucket_key),
+                    default_value: new Node(),
+                    consistency: new StrongFirstWrite()
+                );
+                $bucket->etag ??= '-1';
+
+                return $bucket;
+            } catch (DaprException $e) {
+                if ($retries++ > 3) {
+                    throw $e;
+                }
+            }
+        } while ($retries);
+        throw new \LogicException("unreachable code");
     }
 
     /**
@@ -276,6 +358,66 @@ class Map implements MapInterface, \ArrayAccess
     private function getBucket(string $key): int
     {
         return Murmur::hash3_int($key) % $this->getMapSize();
+    }
+
+    /**
+     * @throws DaprException
+     */
+    private function writeBucket(StateItem $bucket, callable $onFailure): void
+    {
+        try {
+            $this->stateManager->save_state($this->storeName, $bucket);
+
+            return;
+        } catch (DaprException $e) {
+            $onFailure();
+
+            return;
+        }
+    }
+
+    public function unsubscribe(string $key): void
+    {
+        $this->getHeaderAndMaybeRebuild();
+        $bucket = $this->readBucketFor($key);
+        $node   = $this->getNodeFromItem($bucket);
+
+        if ( ! isset($node->triggers[$key])) {
+            return;
+        }
+
+        unset($node->triggers[$key]);
+
+        $this->writeBucket($bucket, fn() => $this->unsubscribe($key));
+    }
+
+    /**
+     * @inheritDoc
+     */
+    public function offsetExists($offset): bool
+    {
+        return $this->contains($offset);
+    }
+
+    /**
+     * Whether the hashmap contains a key
+     *
+     * @param string $key The key to check
+     *
+     * @return bool True if it exists (including null)
+     */
+    public function contains(string $key): bool
+    {
+        $this->getHeaderAndMaybeRebuild();
+        $bucket = $this->stateManager->load_state(
+            $this->storeName,
+            rawurlencode($this->getBucketKey($key)),
+            new Node(),
+            consistency: new StrongFirstWrite()
+        );
+        $node   = $this->getNodeFromItem($bucket);
+
+        return array_key_exists($key, $node->items);
     }
 
     /**
@@ -333,12 +475,22 @@ class Map implements MapInterface, \ArrayAccess
         $retries = 100;
         do {
             try {
-                $this->putRaw($key, $value);
+                ['trigger' => $trigger, 'metadata' => $metadata] = $this->putRaw($key, $value, null);
                 $retries = 0;
             } catch (DaprException) {
                 $retries--;
             }
         } while ($retries > 0);
+
+        if ( ! empty($trigger)) {
+            $this->broadcast($trigger, $metadata);
+        }
+    }
+
+    private function broadcast(TriggerEvent $trigger, array $metadata)
+    {
+        $topic = new Topic($trigger->pubsubName, $trigger->topic, DaprClient::get_client(), $this->logger);
+        $topic->publish($trigger, $metadata);
     }
 
     /**
@@ -356,25 +508,27 @@ class Map implements MapInterface, \ArrayAccess
      */
     public function remove(string $key): void
     {
-        $retries = 100;
-        do {
-            try {
-                $this->getHeaderAndMaybeRebuild();
-                $bucket_key   = $this->getBucketKey($key);
-                $bucket       = $this->stateManager->load_state(
-                    $this->storeName,
-                    rawurlencode($bucket_key),
-                    default_value: new Node(),
-                    consistency: new StrongFirstWrite()
-                );
-                $bucket->etag ??= '-1';
-                $node         = $this->getNodeFromItem($bucket);
-                unset($node->items[$key]);
-                $this->stateManager->save_state($this->storeName, $bucket);
-                $retries = 0;
-            } catch (DaprException) {
-                $retries--;
-            }
-        } while ($retries > 0);
+        $this->getHeaderAndMaybeRebuild();
+        $bucket       = $this->readBucketFor($key);
+        $bucket->etag ??= '-1';
+        $node         = $this->getNodeFromItem($bucket);
+        if ( ! array_key_exists($key, $node->items)) {
+            return;
+        }
+        if ($node->triggers[$key] ?? false) {
+            $this->broadcast(
+                new TriggerEvent(
+                    $key,
+                    $this->name,
+                    $node->items[$key],
+                    null,
+                    $node->triggers[$key]->pubsubName,
+                    $node->triggers[$key]->topic
+                ),
+                $node->triggers[$key]->metadata
+            );
+        }
+        unset($node->items[$key]);
+        $this->writeBucket($bucket, fn() => $this->remove($key));
     }
 }

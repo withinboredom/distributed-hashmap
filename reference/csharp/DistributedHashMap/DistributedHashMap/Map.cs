@@ -1,4 +1,5 @@
 ﻿using System;
+using System.Collections.Generic;
 using System.Text.Json;
 using System.Threading;
 using System.Threading.Tasks;
@@ -18,10 +19,16 @@ namespace DistributedHashMap
         private (Header? header, string etag) _headerTuple;
         private bool _rebuilding;
 
+        public StateOptions DefaultStateOptions { get; set; } = new StateOptions
+        {
+            Concurrency = ConcurrencyMode.FirstWrite,
+            Consistency = ConsistencyMode.Strong
+        };
+
         private Header DefaultHeader => new Header
         {
             MaxLoad = _maxLoad,
-            Generation = (int) Math.Ceiling(Math.Log(Math.Max(256, _expectedCapacity)) / Math.Log(2)) - 7,
+            Generation = (int)Math.Ceiling(Math.Log(Math.Max(256, _expectedCapacity)) / Math.Log(2)) - 7,
         };
 
         private string HeaderKey => "DHMHeader_" + Name;
@@ -153,7 +160,7 @@ namespace DistributedHashMap
         /// <param name="serializedValue"></param>
         /// <param name="cancellationToken"></param>
         /// <returns></returns>
-        private async Task<bool> PutRaw(string key, string serializedValue, CancellationToken cancellationToken = default)
+        private async Task<(TriggerEvent?, bool, Dictionary<string, string>?)> PutRaw(string key, string serializedValue, KeyTrigger? subscribe = null, CancellationToken cancellationToken = default)
         {
             var header = await GetHeaderAndMaybeRebuild(cancellationToken);
             var bucketKey = GetBucketKey(key);
@@ -170,18 +177,34 @@ namespace DistributedHashMap
             nodeItem.etag = nodeItem.etag == String.Empty ? "-1" : nodeItem.etag;
             nodeItem.node ??= new Node();
 
-            if (nodeItem.node.Items.ContainsKey(key) && nodeItem.node.Items[key] == serializedValue)
+            if ((nodeItem.node.Items.ContainsKey(key) && nodeItem.node.Items[key] == serializedValue) && subscribe == null)
             {
-                return true;
+                return (null, true, null);
             }
 
+            nodeItem.node.Items.TryGetValue(key, out var prevValue);
+
             nodeItem.node.Items[key] = serializedValue;
+            if (subscribe != null)
+            {
+                nodeItem.node.Triggers[key] = subscribe;
+            }
+            nodeItem.node.Triggers.TryGetValue(key, out subscribe);
+
             var saved = await _client.TrySaveStateAsync(_storeName, bucketKey, nodeItem.node, nodeItem.etag,
-                new StateOptions { Consistency = ConsistencyMode.Strong, Concurrency = ConcurrencyMode.FirstWrite }, cancellationToken: cancellationToken);
+               DefaultStateOptions, cancellationToken: cancellationToken);
+
+            if (saved && subscribe != null)
+            {
+                var triggerEvent = new TriggerEvent(key, Name, prevValue, serializedValue, subscribe.PubSubName,
+                    subscribe.Topic);
+
+                if (nodeItem.node.Items.Count > header.MaxLoad) await Rebuild(cancellationToken);
+                return (triggerEvent, saved, subscribe.Metadata);
+            }
 
             if (nodeItem.node.Items.Count > header.MaxLoad) await Rebuild(cancellationToken);
-
-            return saved;
+            return (null, saved, null);
         }
 
         /// <summary>
@@ -195,7 +218,17 @@ namespace DistributedHashMap
         public Task Put<T>(string key, T value, CancellationToken cancellationToken = default)
         {
             var serializedValue = JsonSerializer.Serialize(value, _client.JsonSerializerOptions);
-            return DoRetry(() => PutRaw(key, serializedValue, cancellationToken), cancellationToken);
+            return DoRetry(async () =>
+           {
+               var status = await PutRaw(key, serializedValue, cancellationToken: cancellationToken);
+               if (status.Item1 != null)
+               {
+                   await _client.PublishEventAsync(status.Item1.PubSubName, status.Item1.Topic, status.Item1, status.Item3 ?? new Dictionary<string, string>(),
+                       cancellationToken);
+               }
+
+               return status.Item2;
+           }, cancellationToken);
         }
 
         /// <summary>
@@ -273,16 +306,26 @@ namespace DistributedHashMap
             }
 
             bucket.etag = bucket.etag == String.Empty ? "-1" : bucket.etag;
+            bucket.node ??= new Node();
             if (!bucket.node.Items.ContainsKey(key)) return;
+
+            bucket.node.Triggers.TryGetValue(key, out var subscribe);
+            bucket.node.Items.TryGetValue(key, out var prevValue);
 
             bucket.node.Items.Remove(key);
 
             var saved = await _client.TrySaveStateAsync(_storeName, bucketKey, bucket.node, bucket.etag,
-                new StateOptions { Consistency = ConsistencyMode.Strong, Concurrency = ConcurrencyMode.FirstWrite }, cancellationToken: cancellationToken);
+                DefaultStateOptions, cancellationToken: cancellationToken);
 
-            if (!saved)
+            switch (saved)
             {
-                await Remove(key, cancellationToken);
+                case true when subscribe != null:
+                    await _client.PublishEventAsync(subscribe.PubSubName, subscribe.Topic,
+                        new TriggerEvent(key, Name, prevValue, null, subscribe.PubSubName, subscribe.Topic), subscribe.Metadata ?? new Dictionary<string, string>(), cancellationToken);
+                    break;
+                case false:
+                    await Remove(key, cancellationToken);
+                    break;
             }
         }
 
@@ -314,7 +357,8 @@ namespace DistributedHashMap
             var currentGeneration = header.Generation;
             var nextGeneration = new Map(Name, _storeName, _client)
             {
-                _headerTuple = (nextGenerationHeader, _headerTuple.etag), _rebuilding = true
+                _headerTuple = (nextGenerationHeader, _headerTuple.etag),
+                _rebuilding = true
             };
 
             do
@@ -325,7 +369,12 @@ namespace DistributedHashMap
                 {
                     foreach (var (key, serializedValue) in value.Items)
                     {
-                        await DoRetry(() => nextGeneration.PutRaw(key, serializedValue, cancellationToken),
+                        await DoRetry(async () =>
+                           {
+                               var status = await nextGeneration.PutRaw(key, serializedValue,
+                                   value.Triggers.ContainsKey(key) ? value.Triggers[key] : null, cancellationToken);
+                               return status.Item2;
+                           },
                             cancellationToken, 0);
                     }
                 }
@@ -340,5 +389,67 @@ namespace DistributedHashMap
         }
 
         public event EventHandler<bool> IsRebuilding;
+
+        /// <summary>
+        /// Subscribe to key changes via pubsub
+        /// </summary>
+        /// <param name="key">The key to subscribe to</param>
+        /// <param name="pubSubName">The pubsub to broadcast the change to</param>
+        /// <param name="topic">The topic to broadcast the change to</param>
+        /// <param name="metadata"></param>
+        /// <param name="cancellationToken"></param>
+        /// <returns></returns>
+        public async Task Subscribe(string key, string pubSubName, string topic, Dictionary<string, string>? metadata = null,
+            CancellationToken cancellationToken = default)
+        {
+            await GetHeaderAndMaybeRebuild(cancellationToken);
+            var bucketKey = GetBucketKey(key);
+            (Node? node, string etag) bucket;
+            try
+            {
+                bucket = await _client.GetStateAndETagAsync<Node>(_storeName, bucketKey, ConsistencyMode.Strong, cancellationToken: cancellationToken);
+            }
+            catch (DaprException)
+            {
+                bucket = (new Node(), "");
+            }
+            bucket.etag = bucket.etag == string.Empty ? "-1" : bucket.etag;
+            bucket.node ??= new Node();
+
+            bucket.node.Triggers[key] = new KeyTrigger(pubSubName, topic, metadata);
+            await DoRetry(() => _client.TrySaveStateAsync(_storeName, bucketKey, bucket.node, bucket.etag,
+                DefaultStateOptions, cancellationToken: cancellationToken), cancellationToken);
+        }
+
+        /// <summary>
+        /// Unsubscribe from key changes
+        /// </summary>
+        /// <param name="key">The key to unsubscribe from</param>
+        /// <param name="cancellationToken"></param>
+        /// <returns></returns>
+        public async Task Unsubscribe(string key, CancellationToken cancellationToken = default)
+        {
+            await GetHeaderAndMaybeRebuild(cancellationToken);
+            var bucketKey = GetBucketKey(key);
+            (Node? node, string etag) bucket;
+            try
+            {
+                bucket = await _client.GetStateAndETagAsync<Node>(_storeName, bucketKey, ConsistencyMode.Strong, cancellationToken: cancellationToken);
+            }
+            catch (DaprException)
+            {
+                bucket = (new Node(), "");
+            }
+            bucket.etag = bucket.etag == string.Empty ? "-1" : bucket.etag;
+            bucket.node ??= new Node();
+            if (bucket.node.Triggers.ContainsKey(key))
+            {
+                bucket.node.Triggers.Remove(key);
+            }
+
+            await DoRetry(
+                () => _client.TrySaveStateAsync(_storeName, bucketKey, bucket.node, bucket.etag, DefaultStateOptions,
+                    cancellationToken: cancellationToken), cancellationToken);
+        }
     }
 }
