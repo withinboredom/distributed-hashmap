@@ -5,6 +5,12 @@ A Distributed hashmap for Dapr.
 This is a simplistic lock-free implementation of a hashmap that allows fast concurrent writes. It works almost like a
 regular hashmap except instead of using memory, it uses Dapr State.
 
+## Features
+
+1. Subscribe/unsubscribe to key changes/deletes/inserts.
+2. Supported in multiple languages.
+3. Have a large list of items without worrying about race conditions.
+
 ## Implementations:
 
 - PHP [source](reference/php) [Packagist](https://packagist.org/packages/withinboredom/distributed-hashmap)
