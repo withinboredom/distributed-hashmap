@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace DistributedHashMap
 {
-    interface IMap
+    interface IMap : IDisposable
     {
         /// <summary>
         /// Put a value into the hashmap

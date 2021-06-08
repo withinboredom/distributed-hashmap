@@ -451,5 +451,10 @@ namespace DistributedHashMap
                 () => _client.TrySaveStateAsync(_storeName, bucketKey, bucket.node, bucket.etag, DefaultStateOptions,
                     cancellationToken: cancellationToken), cancellationToken);
         }
+
+        public void Dispose()
+        {
+            _client.Dispose();
+        }
     }
 }
