@@ -68,16 +68,23 @@ function fork_and_run($message, $serializer, $deserializer, $stateManager, $seed
 
 switch ($argv[1]) {
     case 'validate':
+        $failed = false;
         foreach (['c#', 'php'] as $lang) {
             $lang_encoded = rawurlencode($lang);
             $total        = number_format(NUMBER_MESSAGES, 0);
             $stats        = json_decode(file_get_contents("http://localhost/stats/$lang_encoded"), true);
             $created      = number_format($stats['createdCount'] ?? 0, 0);
+            $dupes = number_format($stats['createdDupeCount'] ?? 0, 0);
             if ($created !== $total) {
                 echo "$lang broadcast $created events and expected $total\n";
-                exit(1);
+                $failed = true;
+            }
+            if($dupes) {
+                echo "$lang broadcast $dupes duplicate events, expected 0\n";
+                $failed = true;
             }
         }
+        exit((int) $failed);
         break;
     case 'read':
         $seed = uniqid();

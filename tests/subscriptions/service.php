@@ -31,10 +31,17 @@ $app->post(
         $created = $event->data['previousValue'] === null;
         $deleted = $event->data['newValue'] === null;
         $changed = $created ? 'created' : ($deleted ? 'deleted' : 'changed');
-        if(!is_dir("/tmp/$lang/$changed")) {
+        if ( ! is_dir("/tmp/$lang/$changed")) {
             @mkdir("/tmp/$lang/$changed");
         }
-        touch("/tmp/$lang/$changed/$key");
+
+        $filename = "/tmp/$lang/$changed/$key";
+
+        if (file_exists($filename)) {
+            touch("/tmp/$lang/$changed-dups/$key");
+        }
+
+        touch($filename);
     }
 );
 $app->get(
@@ -43,9 +50,10 @@ $app->get(
         $lang = rawurldecode($lang);
 
         return [
-            'createdCount' => count(glob("/tmp/$lang/created/*")),
-            'deletedCount' => count(glob("/tmp/$lang/deleted/*")),
-            'changedCount' => count(glob("/tmp/$lang/changed/*")),
+            'createdCount'     => count(glob("/tmp/$lang/created/*")),
+            'createdDupeCount' => count(glob("/tmp/$lang/created-dups/*")),
+            'deletedCount'     => count(glob("/tmp/$lang/deleted/*")),
+            'changedCount'     => count(glob("/tmp/$lang/changed/*")),
         ];
     }
 );
