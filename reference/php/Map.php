@@ -25,6 +25,7 @@ use Psr\Log\LoggerInterface;
  */
 class Map implements MapInterface, ArrayAccess
 {
+    public mixed $rebuildCallback = null;
     /**
      * @var StateItem The cached header for operations
      */
@@ -84,7 +85,7 @@ class Map implements MapInterface, ArrayAccess
 
         $header = $this->getHeaderFromStore();
         if ($header->rebuilding) {
-            $this->rebuild();
+            $this->rebuild('joining rebuild');
 
             return $this->getHeaderFromStore();
         }
@@ -141,10 +142,14 @@ class Map implements MapInterface, ArrayAccess
     /**
      * Participate or start a rebuild of the next generation
      */
-    public function rebuild(): void
+    public function rebuild($reason = 'manual'): void
     {
         $header = $this->getHeaderFromHeader();
         if ( ! $header->rebuilding) {
+            if (is_callable($this->rebuildCallback)) {
+                $cb = $this->rebuildCallback;
+                $cb('init', $reason);
+            }
             $this->header->value->rebuilding = true;
             try {
                 $this->stateManager->save_state($this->storeName, $this->header);
@@ -170,18 +175,31 @@ class Map implements MapInterface, ArrayAccess
         $nextGeneration->header->value = $nextGenerationHeader;
 
         do {
-            $bucket = $this->stateManager->load_state(
+            $bucket   = $this->stateManager->load_state(
                 $this->storeName,
                 rawurlencode('DHM_'.$this->name.'_'.$this->getHeaderFromHeader()->generation.'_'.$pointer),
                 default_value: new Node(),
                 consistency: new StrongFirstWrite()
             );
-            $node   = $this->getNodeFromItem($bucket);
+            $node     = $this->getNodeFromItem($bucket);
+            $triggers = $node->triggers;
             foreach ($node->items as $key => $value) {
                 $retries = 100;
                 do {
                     try {
-                        $nextGeneration->putRaw($key, $value, $node->triggers[$key] ?? null);
+                        $nextGeneration->putRaw($key, $value, $triggers[$key] ?? null);
+                        unset($triggers[$key]);
+                        $retries = 0;
+                    } catch (DaprException) {
+                        $retries--;
+                    }
+                } while ($retries > 0);
+            }
+            foreach ($triggers as $key => $trigger) {
+                $retries = 100;
+                do {
+                    try {
+                        $nextGeneration->subscribe($key, $trigger->pubsubName, $trigger->topic, $trigger->metadata);
                         $retries = 0;
                     } catch (DaprException) {
                         $retries--;
@@ -195,6 +213,10 @@ class Map implements MapInterface, ArrayAccess
         $header->rebuilding = false;
         $header->generation++;
         $this->header->value = $header;
+        if (is_callable($this->rebuildCallback)) {
+            $cb = $this->rebuildCallback;
+            $cb('finish', $reason);
+        }
         try {
             $this->stateManager->save_state($this->storeName, $this->header);
         } catch (DaprException) {
@@ -266,7 +288,7 @@ class Map implements MapInterface, ArrayAccess
         }
 
         if (count($node->items) > $header->maxLoad) {
-            $this->rebuild();
+            $this->rebuild('exceeded max load');
         }
 
         if ($subscribe || ($trigger = $node->triggers[$key] ?? null) === null) {

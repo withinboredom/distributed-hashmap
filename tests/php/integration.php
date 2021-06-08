@@ -18,6 +18,8 @@ if ( ! isset($argv[1])) {
 
 const NUMBER_MESSAGES = 2000;
 
+
+
 function fork_and_run($message, $serializer, $deserializer, $stateManager, $seed, $delete = false)
 {
     $pid = pcntl_fork();
@@ -44,6 +46,10 @@ function fork_and_run($message, $serializer, $deserializer, $stateManager, $seed
             if ( ! $delete) {
                 //echo "Subscribing to $message...";
                 try {
+                    $map->rebuildCallback = fn($status, $reason) => match ($status) {
+                        'init' => print("Rebuilding (subscribe) at $message: $reason\n"),
+                        'finish' => print("Finished (subscribe) at $message: $reason\n")
+                    };
                     $map->subscribe('php '.$message, 'pubsub', 'changes');
                 } catch (\Throwable $exception) {
                     echo "Failed to subscribe due to {$exception->getMessage()}\n";
@@ -51,6 +57,10 @@ function fork_and_run($message, $serializer, $deserializer, $stateManager, $seed
                 }
                 //echo "done\nPutting $message...";
                 try {
+                    $map->rebuildCallback = fn($status, $reason) => match ($status) {
+                        'init' => print("Rebuilding (put) at $message: $reason\n"),
+                        'finish' => print("Finished (put) at $message: $reason\n")
+                    };
                     $map->put('php '.$message, $message);
                 } catch (\Throwable $exception) {
                     echo "Failed to put due to {$exception->getMessage()}\n";
@@ -79,9 +89,12 @@ switch ($argv[1]) {
                 echo "$lang broadcast $created events and expected $total\n";
                 $failed = true;
             }
-            if($dupes) {
+            elseif($dupes) {
                 echo "$lang broadcast $dupes duplicate events, expected 0\n";
                 $failed = true;
+            }
+            else {
+                echo "$lang broadcast $created events with no duplicates\n";
             }
         }
         exit((int) $failed);
