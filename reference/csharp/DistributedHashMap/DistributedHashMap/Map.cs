@@ -373,9 +373,21 @@ namespace DistributedHashMap
                            {
                                var status = await nextGeneration.PutRaw(key, serializedValue,
                                    value.Triggers.ContainsKey(key) ? value.Triggers[key] : null, cancellationToken);
+                               value.Triggers.Remove(key);
+
                                return status.Item2;
                            },
                             cancellationToken, 0).ConfigureAwait(false);
+                    }
+
+                    foreach (var (key, trigger) in value.Triggers)
+                    {
+                        await DoRetry(async () =>
+                        {
+                            await nextGeneration.Subscribe(key, trigger.PubSubName, trigger.Topic, trigger.Metadata,
+                                cancellationToken).ConfigureAwait(false);
+                            return true;
+                        }, cancellationToken, 0).ConfigureAwait(false);
                     }
                 }
 
