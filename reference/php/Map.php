@@ -3,21 +3,15 @@
 namespace DistributedHashMap;
 
 use ArrayAccess;
+use Dapr\consistency\Consistency;
 use Dapr\consistency\StrongFirstWrite;
-use Dapr\DaprClient;
-use Dapr\Deserialization\IDeserializer;
 use Dapr\exceptions\DaprException;
-use Dapr\PubSub\Topic;
-use Dapr\Serialization\ISerializer;
-use Dapr\State\IManageState;
-use Dapr\State\StateItem;
 use DistributedHashMap\Internal\Header;
 use DistributedHashMap\Internal\KeyTrigger;
 use DistributedHashMap\Internal\MapInterface;
 use DistributedHashMap\Internal\Node;
 use JetBrains\PhpStorm\Pure;
 use lastguest\Murmur;
-use Psr\Log\LoggerInterface;
 
 /**
  * Class Map
@@ -27,29 +21,32 @@ class Map implements MapInterface, ArrayAccess
 {
     public mixed $rebuildCallback = null;
     /**
-     * @var StateItem The cached header for operations
+     * @var Header The cached header for operations
      */
-    private StateItem $header;
+    private Header $header;
+
+    private string $header_etag = '-1';
+
+    private Consistency $defaultConsistency;
 
     /**
      * Map constructor.
      *
      * @param string $name The name of the hash map
-     * @param IManageState $stateManager The state manager
      * @param string $storeName The state store name
-     * @param ISerializer $serializer The serializer
-     * @param IDeserializer $deserializer The deserializer
+     * @param int $expectedCapacity
+     * @param int $maxLoad
+     * @param \Dapr\Client\DaprClient $client
      */
     public function __construct(
         private string $name,
-        private IManageState $stateManager,
         private string $storeName,
-        private ISerializer $serializer,
-        private IDeserializer $deserializer,
-        private LoggerInterface $logger,
+        private \Dapr\Client\DaprClient $client,
         private int $expectedCapacity = 256,
-        private int $maxLoad = 12
+        private int $maxLoad = 12,
+        ?Consistency $defaultConsistency = null
     ) {
+        $this->defaultConsistency = $defaultConsistency ?? new StrongFirstWrite();
     }
 
     /**
@@ -58,8 +55,7 @@ class Map implements MapInterface, ArrayAccess
     public function subscribe(string $key, string $pubsubName, string $topic, array $metadata = []): void
     {
         $this->getHeaderAndMaybeRebuild();
-        $bucket = $this->readBucketFor($key);
-        $node   = $this->getNodeFromItem($bucket);
+        [$node, $etag] = $this->readBucketFor($key);
 
         $trigger = new KeyTrigger($pubsubName, $topic, $metadata);
 
@@ -68,8 +64,7 @@ class Map implements MapInterface, ArrayAccess
         }
 
         $node->triggers[$key] = $trigger;
-
-        $this->writeBucket($bucket, fn() => $this->subscribe($key, $pubsubName, $topic, $metadata));
+        $this->writeBucket($key, $node, $etag, fn() => $this->subscribe($key, $pubsubName, $topic, $metadata));
     }
 
     /**
@@ -100,7 +95,7 @@ class Map implements MapInterface, ArrayAccess
      */
     private function getHeaderFromHeader(): Header
     {
-        return $this->header->value;
+        return $this->header;
     }
 
     /**
@@ -110,26 +105,31 @@ class Map implements MapInterface, ArrayAccess
      */
     private function getHeaderFromStore(): Header
     {
-        $headerKey    = 'DHMHeader_'.$this->name;
-        $this->header = $this->stateManager->load_state(
+        $headerKey = $this->getHeaderKey();
+        ['etag' => $etag, 'value' => $header] = $this->client->getStateAndEtag(
             $this->storeName,
-            rawurlencode($headerKey),
-            default_value: $this->getDefaultHeader(),
-            consistency: new StrongFirstWrite()
+            $headerKey,
+            Header::class,
+            $this->defaultConsistency
         );
-        if ($this->header->etag === null) {
-            $this->header->etag = "-1";
+        if (empty($etag)) {
+            $header = $this->getDefaultHeader();
             try {
-                $this->stateManager->save_state($this->storeName, $this->header);
+                $this->client->trySaveState($this->storeName, $headerKey, $header, '-1', $this->defaultConsistency);
             } catch (DaprException) {
                 // someone else beat us to writing the header
             }
         }
-        if ( ! $this->header->value instanceof Header) {
-            $this->header->value = $this->deserializer->from_value(Header::class, $this->header->value);
-        }
 
-        return $this->header->value;
+        $this->header      = $header;
+        $this->header_etag = $etag;
+
+        return $this->header;
+    }
+
+    private function getHeaderKey(): string
+    {
+        return 'DHMHeader_'.$this->name;
     }
 
     #[Pure] private function getDefaultHeader(): Header
@@ -150,9 +150,10 @@ class Map implements MapInterface, ArrayAccess
                 $cb = $this->rebuildCallback;
                 $cb('init', $reason);
             }
-            $this->header->value->rebuilding = true;
+            $this->header->rebuilding = true;
             try {
-                $this->stateManager->save_state($this->storeName, $this->header);
+                $this->client->trySaveState($this->storeName, $this->getHeaderKey(), $this->header, $this->header_etag, $this->defaultConsistency);
+                $this->getHeaderFromStore();
             } catch (DaprException) {
                 // someone else beat us to updating the header. So we'll have to rebuild later
                 return;
@@ -160,28 +161,19 @@ class Map implements MapInterface, ArrayAccess
         }
         $nextGenerationHeader = clone $header;
         $nextGenerationHeader->generation++;
-        $pointer                       = $start_point = rand(0, $this->getMapSize());
-        $nextGeneration                = new self(
+        $pointer                = $start_point = rand(0, $this->getMapSize());
+        $nextGeneration         = new self(
             $this->name,
-            $this->stateManager,
             $this->storeName,
-            $this->serializer,
-            $this->deserializer,
-            $this->logger,
+            $this->client,
             $this->expectedCapacity,
             $this->maxLoad
         );
-        $nextGeneration->header        = clone $this->header;
-        $nextGeneration->header->value = $nextGenerationHeader;
+        $nextGeneration->header = $nextGenerationHeader;
 
         do {
-            $bucket   = $this->stateManager->load_state(
-                $this->storeName,
-                rawurlencode('DHM_'.$this->name.'_'.$this->getHeaderFromHeader()->generation.'_'.$pointer),
-                default_value: new Node(),
-                consistency: new StrongFirstWrite()
-            );
-            $node     = $this->getNodeFromItem($bucket);
+            [$node, $etag] = $this->readRawBucket('DHM_'.$this->name.'_'.$this->header->generation.'_'.$pointer);
+
             $triggers = $node->triggers;
             foreach ($node->items as $key => $value) {
                 $retries = 100;
@@ -212,13 +204,13 @@ class Map implements MapInterface, ArrayAccess
 
         $header->rebuilding = false;
         $header->generation++;
-        $this->header->value = $header;
+        $this->header = $header;
         if (is_callable($this->rebuildCallback)) {
             $cb = $this->rebuildCallback;
             $cb('finish', $reason);
         }
         try {
-            $this->stateManager->save_state($this->storeName, $this->header);
+            $this->client->trySaveState($this->storeName, $this->getHeaderKey(), $this->header, $this->header_etag, $this->defaultConsistency);
         } catch (DaprException) {
             // someone won this race
         }
@@ -235,20 +227,31 @@ class Map implements MapInterface, ArrayAccess
         return pow(2, 7 + $this->getHeaderFromHeader()->generation);
     }
 
-    /**
-     * Get a node from a state item
-     *
-     * @param StateItem $item The item
-     *
-     * @return Node The node
-     */
-    private function getNodeFromItem(StateItem $item): Node
+    private function readRawBucket(string $bucketKey): array
     {
-        if ( ! $item->value instanceof Node) {
-            $item->value = $this->deserializer->from_value(Node::class, $item->value);
-        }
+        $retries = 0;
+        do {
+            try {
+                ['etag' => $etag, 'value' => $bucket] = $this->client->getStateAndEtag(
+                    $this->storeName,
+                    $bucketKey,
+                    Node::class,
+                    $this->defaultConsistency
+                );
 
-        return $item->value;
+                if (empty($etag)) {
+                    $bucket = new Node();
+                    $etag = '-1';
+                }
+
+                return [$bucket, $etag];
+            } catch (DaprException $e) {
+                if ($retries++ > 3) {
+                    throw $e;
+                }
+            }
+        } while ($retries);
+        throw new \LogicException("unreachable code");
     }
 
     /**
@@ -262,9 +265,7 @@ class Map implements MapInterface, ArrayAccess
     private function putRaw(string $key, string $value, KeyTrigger|null $subscribe): array
     {
         $header = $this->getHeaderAndMaybeRebuild();
-        $bucket = $this->readBucketFor($key);
-
-        $node = $this->getNodeFromItem($bucket);
+        [$node, $etag] = $this->readBucketFor($key);
 
         if ((isset($node->items[$key]) && $node->items[$key] === $value) && (empty($subscribe) || (isset($node->triggers[$key]) && $node->triggers[$key] == $subscribe))) {
             return ['trigger' => null, 'metadata' => []];
@@ -278,7 +279,9 @@ class Map implements MapInterface, ArrayAccess
         $node->items[$key] = $value;
         $retried           = false;
         $this->writeBucket(
-            $bucket,
+            $key,
+            $node,
+            $etag,
             function () use (&$retried, $key, $value, $subscribe) {
                 $retried = $this->putRaw($key, $value, $subscribe);
             }
@@ -311,29 +314,11 @@ class Map implements MapInterface, ArrayAccess
     /**
      * @throws DaprException
      */
-    private function readBucketFor(string $key): StateItem
+    private function readBucketFor(string $key): array
     {
         $bucket_key = $this->getBucketKey($key);
 
-        $retries = 0;
-        do {
-            try {
-                $bucket       = $this->stateManager->load_state(
-                    $this->storeName,
-                    rawurlencode($bucket_key),
-                    default_value: new Node(),
-                    consistency: new StrongFirstWrite()
-                );
-                $bucket->etag ??= '-1';
-
-                return $bucket;
-            } catch (DaprException $e) {
-                if ($retries++ > 3) {
-                    throw $e;
-                }
-            }
-        } while ($retries);
-        throw new \LogicException("unreachable code");
+        return $this->readRawBucket($bucket_key);
     }
 
     /**
@@ -361,12 +346,19 @@ class Map implements MapInterface, ArrayAccess
     }
 
     /**
-     * @throws DaprException
      */
-    private function writeBucket(StateItem $bucket, callable $onFailure): void
+    private function writeBucket(string $key, Node $node, string $etag, callable $onFailure): void
     {
         try {
-            $this->stateManager->save_state($this->storeName, $bucket);
+            if ( ! $this->client->trySaveState(
+                $this->storeName,
+                $this->getBucketKey($key),
+                $node,
+                $etag,
+                $this->defaultConsistency
+            )) {
+                $onFailure();
+            }
 
             return;
         } catch (DaprException $e) {
@@ -376,19 +368,20 @@ class Map implements MapInterface, ArrayAccess
         }
     }
 
+    /**
+     * @throws DaprException
+     */
     public function unsubscribe(string $key): void
     {
         $this->getHeaderAndMaybeRebuild();
-        $bucket = $this->readBucketFor($key);
-        $node   = $this->getNodeFromItem($bucket);
+        [$node, $etag] = $this->readBucketFor($key);
 
         if ( ! isset($node->triggers[$key])) {
             return;
         }
 
         unset($node->triggers[$key]);
-
-        $this->writeBucket($bucket, fn() => $this->unsubscribe($key));
+        $this->writeBucket($key, $node, $etag, fn() => $this->unsubscribe($key));
     }
 
     /**
@@ -409,13 +402,7 @@ class Map implements MapInterface, ArrayAccess
     public function contains(string $key): bool
     {
         $this->getHeaderAndMaybeRebuild();
-        $bucket = $this->stateManager->load_state(
-            $this->storeName,
-            rawurlencode($this->getBucketKey($key)),
-            new Node(),
-            consistency: new StrongFirstWrite()
-        );
-        $node   = $this->getNodeFromItem($bucket);
+        [$node, $etag] = $this->readBucketFor($key);
 
         return array_key_exists($key, $node->items);
     }
@@ -439,20 +426,13 @@ class Map implements MapInterface, ArrayAccess
     public function get(string $key, ?string $type = null): mixed
     {
         $this->getHeaderAndMaybeRebuild();
-        $bucket_key = $this->getBucketKey($key);
-        $bucket     = $this->stateManager->load_state(
-            $this->storeName,
-            rawurlencode($bucket_key),
-            new Node(),
-            consistency: new StrongFirstWrite()
-        );
-        $node       = $this->getNodeFromItem($bucket);
-        $value      = $node->items[$key] ?? null;
+        [$node, $etag] = $this->readBucketFor($key);
+        $value = $node->items[$key] ?? null;
         if ($value === null || ! $type) {
             return $value;
         }
 
-        return $this->deserializer->from_json($type, $value);
+        return $this->client->deserializer->from_json($type, $value);
     }
 
     /**
@@ -471,7 +451,7 @@ class Map implements MapInterface, ArrayAccess
      */
     public function put(string $key, mixed $value): void
     {
-        $value   = $this->serializer->as_json($value);
+        $value   = $this->client->serializer->as_json($value);
         $retries = 100;
         do {
             try {
@@ -489,8 +469,7 @@ class Map implements MapInterface, ArrayAccess
 
     private function broadcast(TriggerEvent $trigger, array $metadata)
     {
-        $topic = new Topic($trigger->pubsubName, $trigger->topic, DaprClient::get_client(), $this->logger);
-        $topic->publish($trigger, $metadata);
+        $this->client->publishEvent($trigger->pubsubName, $trigger->topic, $trigger, $metadata);
     }
 
     /**
@@ -509,26 +488,34 @@ class Map implements MapInterface, ArrayAccess
     public function remove(string $key): void
     {
         $this->getHeaderAndMaybeRebuild();
-        $bucket       = $this->readBucketFor($key);
-        $bucket->etag ??= '-1';
-        $node         = $this->getNodeFromItem($bucket);
+        [$node, $etag] = $this->readBucketFor($key);
         if ( ! array_key_exists($key, $node->items)) {
             return;
         }
         if ($node->triggers[$key] ?? false) {
-            $this->broadcast(
-                new TriggerEvent(
-                    $key,
-                    $this->name,
-                    $node->items[$key],
-                    null,
-                    $node->triggers[$key]->pubsubName,
-                    $node->triggers[$key]->topic
-                ),
-                $node->triggers[$key]->metadata
+            $trigger  = new TriggerEvent(
+                $key,
+                $this->name,
+                $node->items[$key],
+                null,
+                $node->triggers[$key]->pubsubName,
+                $node->triggers[$key]->topic
             );
+            $metadata = $node->triggers[$key]->metadata;
         }
         unset($node->items[$key]);
-        $this->writeBucket($bucket, fn() => $this->remove($key));
+        $retried = false;
+        $this->writeBucket(
+            $key,
+            $node,
+            $etag,
+            function () use (&$retried, $key) {
+                $retried = true;
+                $this->remove($key);
+            }
+        );
+        if ( ! $retried && ! empty($trigger)) {
+            $this->broadcast($trigger, $metadata ?? []);
+        }
     }
 }
