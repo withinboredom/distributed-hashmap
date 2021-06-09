@@ -4,8 +4,15 @@ namespace DistributedHashMap\Test;
 
 require_once __DIR__.'/../../vendor/autoload.php';
 
+if(function_exists('opcache_get_status')) {
+    if(opcache_get_status()['jit']['enabled']) {
+        echo "JIT enabled!\n";
+    }
+}
+
 use Dapr\App;
 use Dapr\Client\DaprClient;
+use Dapr\consistency\EventualFirstWrite;
 use Dapr\Deserialization\IDeserializer;
 use Dapr\Serialization\ISerializer;
 use Dapr\State\StateManager;
@@ -36,7 +43,8 @@ function fork_and_run($message, $seed, $delete = false)
             $map    = new Map(
                 'php'.$seed,
                 'statestore',
-                $client
+                $client,
+                defaultConsistency: new EventualFirstWrite()
             //expectedCapacity: NUMBER_MESSAGES
             );
             if ( ! $delete) {

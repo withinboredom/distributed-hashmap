@@ -3,6 +3,7 @@
 namespace DistributedHashMap;
 
 use ArrayAccess;
+use Dapr\consistency\Consistency;
 use Dapr\consistency\StrongFirstWrite;
 use Dapr\exceptions\DaprException;
 use DistributedHashMap\Internal\Header;
@@ -26,6 +27,8 @@ class Map implements MapInterface, ArrayAccess
 
     private string $header_etag = '-1';
 
+    private Consistency $defaultConsistency;
+
     /**
      * Map constructor.
      *
@@ -41,7 +44,9 @@ class Map implements MapInterface, ArrayAccess
         private \Dapr\Client\DaprClient $client,
         private int $expectedCapacity = 256,
         private int $maxLoad = 12,
+        ?Consistency $defaultConsistency = null
     ) {
+        $this->defaultConsistency = $defaultConsistency ?? new StrongFirstWrite();
     }
 
     /**
@@ -105,12 +110,12 @@ class Map implements MapInterface, ArrayAccess
             $this->storeName,
             $headerKey,
             Header::class,
-            new StrongFirstWrite()
+            $this->defaultConsistency
         );
         if (empty($etag)) {
             $header = $this->getDefaultHeader();
             try {
-                $this->client->trySaveState($this->storeName, $headerKey, $header, '-1');
+                $this->client->trySaveState($this->storeName, $headerKey, $header, '-1', $this->defaultConsistency);
             } catch (DaprException) {
                 // someone else beat us to writing the header
             }
@@ -147,7 +152,7 @@ class Map implements MapInterface, ArrayAccess
             }
             $this->header->rebuilding = true;
             try {
-                $this->client->trySaveState($this->storeName, $this->getHeaderKey(), $this->header, $this->header_etag);
+                $this->client->trySaveState($this->storeName, $this->getHeaderKey(), $this->header, $this->header_etag, $this->defaultConsistency);
                 $this->getHeaderFromStore();
             } catch (DaprException) {
                 // someone else beat us to updating the header. So we'll have to rebuild later
@@ -205,7 +210,7 @@ class Map implements MapInterface, ArrayAccess
             $cb('finish', $reason);
         }
         try {
-            $this->client->trySaveState($this->storeName, $this->getHeaderKey(), $this->header, $this->header_etag);
+            $this->client->trySaveState($this->storeName, $this->getHeaderKey(), $this->header, $this->header_etag, $this->defaultConsistency);
         } catch (DaprException) {
             // someone won this race
         }
@@ -231,7 +236,7 @@ class Map implements MapInterface, ArrayAccess
                     $this->storeName,
                     $bucketKey,
                     Node::class,
-                    new StrongFirstWrite()
+                    $this->defaultConsistency
                 );
 
                 if (empty($etag)) {
@@ -349,7 +354,7 @@ class Map implements MapInterface, ArrayAccess
                 $this->getBucketKey($key),
                 $node,
                 $etag,
-                new StrongFirstWrite()
+                $this->defaultConsistency
             )) {
                 $onFailure();
             }
