@@ -167,11 +167,7 @@ class Map implements MapInterface, ArrayAccess
         $nextGeneration->header = $nextGenerationHeader;
 
         do {
-            ['value' => $node] = $this->client->getStateAndEtag(
-                $this->storeName,
-                'DHM_'.$this->name.'_'.$this->header->generation.'_'.$pointer,
-                Node::class
-            );
+            [$node, $etag] = $this->readRawBucket('DHM_'.$this->name.'_'.$this->header->generation.'_'.$pointer);
 
             $triggers = $node->triggers;
             foreach ($node->items as $key => $value) {
@@ -224,6 +220,32 @@ class Map implements MapInterface, ArrayAccess
     #[Pure] private function getMapSize(): int
     {
         return pow(2, 7 + $this->getHeaderFromHeader()->generation);
+    }
+
+    private function readRawBucket(string $bucketKey): array
+    {
+        $retries = 0;
+        do {
+            try {
+                ['etag' => $etag, 'value' => $bucket] = $this->client->getStateAndEtag(
+                    $this->storeName,
+                    $bucketKey,
+                    Node::class,
+                    new StrongFirstWrite()
+                );
+
+                if (empty($etag)) {
+                    $bucket = new Node();
+                }
+
+                return [$bucket, $etag];
+            } catch (DaprException $e) {
+                if ($retries++ > 3) {
+                    throw $e;
+                }
+            }
+        } while ($retries);
+        throw new \LogicException("unreachable code");
     }
 
     /**
@@ -290,28 +312,7 @@ class Map implements MapInterface, ArrayAccess
     {
         $bucket_key = $this->getBucketKey($key);
 
-        $retries = 0;
-        do {
-            try {
-                ['etag' => $etag, 'value' => $bucket] = $this->client->getStateAndEtag(
-                    $this->storeName,
-                    $bucket_key,
-                    Node::class,
-                    new StrongFirstWrite()
-                );
-
-                if (empty($etag)) {
-                    $bucket = new Node();
-                }
-
-                return [$bucket, $etag];
-            } catch (DaprException $e) {
-                if ($retries++ > 3) {
-                    throw $e;
-                }
-            }
-        } while ($retries);
-        throw new \LogicException("unreachable code");
+        return $this->readRawBucket($bucket_key);
     }
 
     /**
@@ -343,7 +344,13 @@ class Map implements MapInterface, ArrayAccess
     private function writeBucket(string $key, Node $node, string $etag, callable $onFailure): void
     {
         try {
-            if ( ! $this->client->trySaveState($this->storeName, $key, $node, $etag, new StrongFirstWrite())) {
+            if ( ! $this->client->trySaveState(
+                $this->storeName,
+                $this->getBucketKey($key),
+                $node,
+                $etag,
+                new StrongFirstWrite()
+            )) {
                 $onFailure();
             }
 

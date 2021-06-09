@@ -16,7 +16,7 @@ if ( ! isset($argv[1])) {
     exit(1);
 }
 
-const NUMBER_MESSAGES = 10;
+const NUMBER_MESSAGES = 2000;
 
 function fork_and_run($message, $seed, $delete = false)
 {
@@ -173,7 +173,7 @@ switch ($argv[1]) {
         $written_messages = 0;
         $every            = (int)round(NUMBER_MESSAGES * 0.1);
 
-        $number_threads = 1;
+        $number_threads = 10;
 
         echo "Starting to write.\n";
         $pids       = [];
