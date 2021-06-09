@@ -5,22 +5,20 @@ namespace DistributedHashMap\Test;
 require_once __DIR__.'/../../vendor/autoload.php';
 
 use Dapr\App;
+use Dapr\Client\DaprClient;
 use Dapr\Deserialization\IDeserializer;
 use Dapr\Serialization\ISerializer;
 use Dapr\State\StateManager;
 use DistributedHashMap\Map;
-use Psr\Log\NullLogger;
 
 if ( ! isset($argv[1])) {
     echo "usage: integration.php [write|read]";
     exit(1);
 }
 
-const NUMBER_MESSAGES = 2000;
+const NUMBER_MESSAGES = 10;
 
-
-
-function fork_and_run($message, $serializer, $deserializer, $stateManager, $seed, $delete = false)
+function fork_and_run($message, $seed, $delete = false)
 {
     $pid = pcntl_fork();
     set_error_handler(
@@ -34,13 +32,11 @@ function fork_and_run($message, $serializer, $deserializer, $stateManager, $seed
             echo "Unable to fork!\n";
             exit(1);
         case 0:
-            $map = new Map(
+            $client = DaprClient::clientBuilder()->build();
+            $map    = new Map(
                 'php'.$seed,
-                $stateManager,
                 'statestore',
-                $serializer,
-                $deserializer,
-                new NullLogger(),
+                $client
             //expectedCapacity: NUMBER_MESSAGES
             );
             if ( ! $delete) {
@@ -76,11 +72,13 @@ function fork_and_run($message, $serializer, $deserializer, $stateManager, $seed
     }
 }
 
+$client = DaprClient::clientBuilder()->build();
+
 switch ($argv[1]) {
     case 'validate':
 
         $timeout = 500;
-        $start = time();
+        $start   = time();
 
         do {
             $failed = false;
@@ -101,8 +99,8 @@ switch ($argv[1]) {
                     echo "$lang broadcast $created events with no duplicates\n";
                 }
             }
-        } while(time() - $start < $timeout && $failed);
-        exit((int) $failed);
+        } while (time() - $start < $timeout && $failed);
+        exit((int)$failed);
     case 'read':
         $seed = uniqid();
         if (isset($argv[2])) {
@@ -130,11 +128,8 @@ switch ($argv[1]) {
         foreach ($langs as $lang) {
             $map = new Map(
                 $lang.$seed,
-                $stateManager,
                 'statestore',
-                $serializer,
-                $deserializer,
-                new NullLogger(),
+                client: $client
             //expectedCapacity: NUMBER_MESSAGES
             );
             echo "Verifying $lang: ";
@@ -178,13 +173,13 @@ switch ($argv[1]) {
         $written_messages = 0;
         $every            = (int)round(NUMBER_MESSAGES * 0.1);
 
-        $number_threads = 10;
+        $number_threads = 1;
 
         echo "Starting to write.\n";
         $pids       = [];
         $start_time = microtime(true);
         for ($i = 0; $i < NUMBER_MESSAGES; $i++) {
-            $pids[] = fork_and_run($i, $serializer, $deserializer, $stateManager, $seed, delete: $delete ?? false);
+            $pids[] = fork_and_run($i, $seed, delete: $delete ?? false);
             waiting:
             if (count($pids) >= $number_threads) {
                 $wait = array_shift($pids);
@@ -222,11 +217,8 @@ switch ($argv[1]) {
         echo "verifying...";
         $map = new Map(
             'php'.$seed,
-            $stateManager,
             'statestore',
-            $serializer,
-            $deserializer,
-            new NullLogger(),
+            client: $client
         );
 
         $start_time = microtime(true);

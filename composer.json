@@ -11,7 +11,7 @@
   ],
   "require": {
     "php": ">=8.0",
-    "dapr/php-sdk": "dev-main",
+    "dapr/php-sdk": "dev-add/daprclient-2",
     "lastguest/murmurhash": "^2.1"
   },
   "description": "A distributed hashmap for Dapr state stores.",
