@@ -241,6 +241,7 @@ class Map implements MapInterface, ArrayAccess
 
                 if (empty($etag)) {
                     $bucket = new Node();
+                    $etag = '-1';
                 }
 
                 return [$bucket, $etag];

@@ -5,7 +5,7 @@ namespace DistributedHashMap\Test;
 require_once __DIR__.'/../../vendor/autoload.php';
 
 if(function_exists('opcache_get_status')) {
-    if(opcache_get_status()['jit']['enabled']) {
+    if(opcache_get_status()['jit']['enabled'] ?? false) {
         echo "JIT enabled!\n";
     }
 }
