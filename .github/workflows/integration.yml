@@ -7,12 +7,33 @@ on:
     branches: [ main ]
 
 jobs:
-  run:
+  integration:
     timeout-minutes: 10
     runs-on: ubuntu-latest
 
     steps:
     - uses: actions/checkout@v2
 
-    - name: Run test suite
-      run: ./run.sh
+    - name: Build Images
+      run: docker-compose build --pull
+
+    - name: Pull Images
+      run: docker-compose pull
+
+    - name: Start Services
+      run: docker-compose up -d php-daprd csharp-daprd subscriptions
+
+    - name: Write (PHP)
+      run: docker-compose run php-writer
+
+    - name: Write (C#)
+      run: docker-compose run csharp-writer
+
+    - name: Read (PHP)
+      run: docker-compose run php-reader
+
+    - name: Read (C#)
+      run: docker-compose run csharp-reader
+
+    - name: Validate Subscriptions
+      run: docker-compose run php-sub-validator
