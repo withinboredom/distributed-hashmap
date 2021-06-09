@@ -12,5 +12,4 @@ docker-compose run php-writer
 docker-compose run csharp-writer
 docker-compose run php-reader
 docker-compose run csharp-reader
-echo waiting 10s for all events to be processed
 docker-compose run php-sub-validator
