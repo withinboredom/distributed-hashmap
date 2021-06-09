@@ -42,7 +42,7 @@ namespace DistributedHashMap
         /// <returns></returns>
         private static async Task<bool> DoRetry(Func<Task<bool>> task, CancellationToken cancel, int numberRetries = 100)
         {
-            var taskStatus = await task();
+            var taskStatus = await task().ConfigureAwait(false);
             if (cancel.IsCancellationRequested || numberRetries < 0)
             {
                 return false;
@@ -50,7 +50,7 @@ namespace DistributedHashMap
 
             if (taskStatus) return true;
 
-            return await DoRetry(task, cancel, numberRetries - 1);
+            return await DoRetry(task, cancel, numberRetries - 1).ConfigureAwait(false);
         }
 
         public string Name
@@ -85,7 +85,7 @@ namespace DistributedHashMap
         {
             try
             {
-                _headerTuple = await _client.GetStateAndETagAsync<Header>(_storeName, HeaderKey, ConsistencyMode.Strong, cancellationToken: cancellationToken);
+                _headerTuple = await _client.GetStateAndETagAsync<Header>(_storeName, HeaderKey, ConsistencyMode.Strong, cancellationToken: cancellationToken).ConfigureAwait(false);
             }
             catch (DaprException)
             {
@@ -95,7 +95,7 @@ namespace DistributedHashMap
             if (_headerTuple.header == null)
             {
                 await _client.SaveStateAsync(_storeName, HeaderKey, DefaultHeader,
-                    cancellationToken: cancellationToken);
+                    cancellationToken: cancellationToken).ConfigureAwait(false);
                 _headerTuple.header = DefaultHeader;
             }
 
@@ -114,14 +114,14 @@ namespace DistributedHashMap
                 return _headerTuple.header ?? throw new InvalidOperationException("Unable to locate header while rebuilding.");
             }
 
-            var header = await GetHeaderFromStore(cancellationToken);
+            var header = await GetHeaderFromStore(cancellationToken).ConfigureAwait(false);
             if (!header.Rebuilding)
             {
                 return header;
             }
 
-            await Rebuild(cancellationToken);
-            return await GetHeaderFromStore(cancellationToken);
+            await Rebuild(cancellationToken).ConfigureAwait(false);
+            return await GetHeaderFromStore(cancellationToken).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -162,12 +162,12 @@ namespace DistributedHashMap
         /// <returns></returns>
         private async Task<(TriggerEvent?, bool, Dictionary<string, string>?)> PutRaw(string key, string serializedValue, KeyTrigger? subscribe = null, CancellationToken cancellationToken = default)
         {
-            var header = await GetHeaderAndMaybeRebuild(cancellationToken);
+            var header = await GetHeaderAndMaybeRebuild(cancellationToken).ConfigureAwait(false);
             var bucketKey = GetBucketKey(key);
             (Node? node, string etag) nodeItem;
             try
             {
-                nodeItem = await _client.GetStateAndETagAsync<Node>(_storeName, bucketKey, ConsistencyMode.Strong, cancellationToken: cancellationToken);
+                nodeItem = await _client.GetStateAndETagAsync<Node>(_storeName, bucketKey, ConsistencyMode.Strong, cancellationToken: cancellationToken).ConfigureAwait(false);
             }
             catch (DaprException)
             {
@@ -192,18 +192,18 @@ namespace DistributedHashMap
             nodeItem.node.Triggers.TryGetValue(key, out subscribe);
 
             var saved = await _client.TrySaveStateAsync(_storeName, bucketKey, nodeItem.node, nodeItem.etag,
-               DefaultStateOptions, cancellationToken: cancellationToken);
+               DefaultStateOptions, cancellationToken: cancellationToken).ConfigureAwait(false);
 
             if (saved && subscribe != null)
             {
                 var triggerEvent = new TriggerEvent(key, Name, prevValue, serializedValue, subscribe.PubSubName,
                     subscribe.Topic);
 
-                if (nodeItem.node.Items.Count > header.MaxLoad) await Rebuild(cancellationToken);
+                if (nodeItem.node.Items.Count > header.MaxLoad) await Rebuild(cancellationToken).ConfigureAwait(false);
                 return (triggerEvent, saved, subscribe.Metadata);
             }
 
-            if (nodeItem.node.Items.Count > header.MaxLoad) await Rebuild(cancellationToken);
+            if (nodeItem.node.Items.Count > header.MaxLoad) await Rebuild(cancellationToken).ConfigureAwait(false);
             return (null, saved, null);
         }
 
@@ -220,11 +220,11 @@ namespace DistributedHashMap
             var serializedValue = JsonSerializer.Serialize(value, _client.JsonSerializerOptions);
             return DoRetry(async () =>
            {
-               var status = await PutRaw(key, serializedValue, cancellationToken: cancellationToken);
+               var status = await PutRaw(key, serializedValue, cancellationToken: cancellationToken).ConfigureAwait(false);
                if (status.Item1 != null)
                {
                    await _client.PublishEventAsync(status.Item1.PubSubName, status.Item1.Topic, status.Item1, status.Item3 ?? new Dictionary<string, string>(),
-                       cancellationToken);
+                       cancellationToken).ConfigureAwait(false);
                }
 
                return status.Item2;
@@ -240,12 +240,12 @@ namespace DistributedHashMap
         /// <returns>The value for the given key</returns>
         public async Task<T> Get<T>(string key, CancellationToken cancellationToken = default)
         {
-            await GetHeaderAndMaybeRebuild(cancellationToken);
+            await GetHeaderAndMaybeRebuild(cancellationToken).ConfigureAwait(false);
             var bucketKey = GetBucketKey(key);
             (Node? node, string etag) bucket;
             try
             {
-                bucket = await _client.GetStateAndETagAsync<Node>(_storeName, bucketKey, ConsistencyMode.Strong, cancellationToken: cancellationToken);
+                bucket = await _client.GetStateAndETagAsync<Node>(_storeName, bucketKey, ConsistencyMode.Strong, cancellationToken: cancellationToken).ConfigureAwait(false);
             }
             catch (DaprException)
             {
@@ -270,12 +270,12 @@ namespace DistributedHashMap
         /// <returns>True if there is a key</returns>
         public async Task<bool> Contains(string key, CancellationToken cancellationToken = default)
         {
-            await GetHeaderAndMaybeRebuild(cancellationToken);
+            await GetHeaderAndMaybeRebuild(cancellationToken).ConfigureAwait(false);
             var bucketKey = GetBucketKey(key);
             (Node node, string? etag) bucket;
             try
             {
-                bucket = await _client.GetStateAndETagAsync<Node>(_storeName, bucketKey, ConsistencyMode.Strong, cancellationToken: cancellationToken);
+                bucket = await _client.GetStateAndETagAsync<Node>(_storeName, bucketKey, ConsistencyMode.Strong, cancellationToken: cancellationToken).ConfigureAwait(false);
             }
             catch (DaprException)
             {
@@ -293,12 +293,12 @@ namespace DistributedHashMap
         /// <returns></returns>
         public async Task Remove(string key, CancellationToken cancellationToken = default)
         {
-            await GetHeaderAndMaybeRebuild(cancellationToken);
+            await GetHeaderAndMaybeRebuild(cancellationToken).ConfigureAwait(false);
             var bucketKey = GetBucketKey(key);
             (Node? node, string etag) bucket;
             try
             {
-                bucket = await _client.GetStateAndETagAsync<Node>(_storeName, bucketKey, ConsistencyMode.Strong, cancellationToken: cancellationToken);
+                bucket = await _client.GetStateAndETagAsync<Node>(_storeName, bucketKey, ConsistencyMode.Strong, cancellationToken: cancellationToken).ConfigureAwait(false);
             }
             catch (DaprException)
             {
@@ -315,16 +315,16 @@ namespace DistributedHashMap
             bucket.node.Items.Remove(key);
 
             var saved = await _client.TrySaveStateAsync(_storeName, bucketKey, bucket.node, bucket.etag,
-                DefaultStateOptions, cancellationToken: cancellationToken);
+                DefaultStateOptions, cancellationToken: cancellationToken).ConfigureAwait(false);
 
             switch (saved)
             {
                 case true when subscribe != null:
                     await _client.PublishEventAsync(subscribe.PubSubName, subscribe.Topic,
-                        new TriggerEvent(key, Name, prevValue, null, subscribe.PubSubName, subscribe.Topic), subscribe.Metadata ?? new Dictionary<string, string>(), cancellationToken);
+                        new TriggerEvent(key, Name, prevValue, null, subscribe.PubSubName, subscribe.Topic), subscribe.Metadata ?? new Dictionary<string, string>(), cancellationToken).ConfigureAwait(false);
                     break;
                 case false:
-                    await Remove(key, cancellationToken);
+                    await Remove(key, cancellationToken).ConfigureAwait(false);
                     break;
             }
         }
@@ -339,11 +339,11 @@ namespace DistributedHashMap
         public async Task Rebuild(CancellationToken cancellationToken = default)
         {
             IsRebuilding?.Invoke(this, true);
-            var header = _headerTuple.header ?? await GetHeaderFromStore(cancellationToken);
+            var header = _headerTuple.header ?? await GetHeaderFromStore(cancellationToken).ConfigureAwait(false);
             if (!header.Rebuilding)
             {
                 header.Rebuilding = true;
-                await _client.TrySaveStateAsync(_storeName, HeaderKey, header, _headerTuple.etag, cancellationToken: cancellationToken);
+                await _client.TrySaveStateAsync(_storeName, HeaderKey, header, _headerTuple.etag, cancellationToken: cancellationToken).ConfigureAwait(false);
             }
             var nextGenerationHeader = new Header
             {
@@ -364,7 +364,7 @@ namespace DistributedHashMap
             do
             {
                 var (value, _) = await _client.GetStateAndETagAsync<Node>(_storeName,
-                    $"DHM_{Name}_{currentGeneration}_{pointer}", cancellationToken: cancellationToken);
+                    $"DHM_{Name}_{currentGeneration}_{pointer}", cancellationToken: cancellationToken).ConfigureAwait(false);
                 if (value != null)
                 {
                     foreach (var (key, serializedValue) in value.Items)
@@ -373,9 +373,21 @@ namespace DistributedHashMap
                            {
                                var status = await nextGeneration.PutRaw(key, serializedValue,
                                    value.Triggers.ContainsKey(key) ? value.Triggers[key] : null, cancellationToken);
+                               value.Triggers.Remove(key);
+
                                return status.Item2;
                            },
-                            cancellationToken, 0);
+                            cancellationToken, 0).ConfigureAwait(false);
+                    }
+
+                    foreach (var (key, trigger) in value.Triggers)
+                    {
+                        await DoRetry(async () =>
+                        {
+                            await nextGeneration.Subscribe(key, trigger.PubSubName, trigger.Topic, trigger.Metadata,
+                                cancellationToken).ConfigureAwait(false);
+                            return true;
+                        }, cancellationToken, 0).ConfigureAwait(false);
                     }
                 }
 
@@ -384,7 +396,7 @@ namespace DistributedHashMap
 
             header.Rebuilding = false;
             header.Generation++;
-            await _client.SaveStateAsync(_storeName, HeaderKey, _headerTuple.header, cancellationToken: cancellationToken);
+            await _client.SaveStateAsync(_storeName, HeaderKey, _headerTuple.header, cancellationToken: cancellationToken).ConfigureAwait(false);
             IsRebuilding?.Invoke(this, false);
         }
 
@@ -402,12 +414,12 @@ namespace DistributedHashMap
         public async Task Subscribe(string key, string pubSubName, string topic, Dictionary<string, string>? metadata = null,
             CancellationToken cancellationToken = default)
         {
-            await GetHeaderAndMaybeRebuild(cancellationToken);
+            await GetHeaderAndMaybeRebuild(cancellationToken).ConfigureAwait(false);
             var bucketKey = GetBucketKey(key);
             (Node? node, string etag) bucket;
             try
             {
-                bucket = await _client.GetStateAndETagAsync<Node>(_storeName, bucketKey, ConsistencyMode.Strong, cancellationToken: cancellationToken);
+                bucket = await _client.GetStateAndETagAsync<Node>(_storeName, bucketKey, ConsistencyMode.Strong, cancellationToken: cancellationToken).ConfigureAwait(false);
             }
             catch (DaprException)
             {
@@ -418,7 +430,7 @@ namespace DistributedHashMap
 
             bucket.node.Triggers[key] = new KeyTrigger(pubSubName, topic, metadata);
             await DoRetry(() => _client.TrySaveStateAsync(_storeName, bucketKey, bucket.node, bucket.etag,
-                DefaultStateOptions, cancellationToken: cancellationToken), cancellationToken);
+                DefaultStateOptions, cancellationToken: cancellationToken), cancellationToken).ConfigureAwait(false);
         }
 
         /// <summary>
@@ -429,12 +441,12 @@ namespace DistributedHashMap
         /// <returns></returns>
         public async Task Unsubscribe(string key, CancellationToken cancellationToken = default)
         {
-            await GetHeaderAndMaybeRebuild(cancellationToken);
+            await GetHeaderAndMaybeRebuild(cancellationToken).ConfigureAwait(false);
             var bucketKey = GetBucketKey(key);
             (Node? node, string etag) bucket;
             try
             {
-                bucket = await _client.GetStateAndETagAsync<Node>(_storeName, bucketKey, ConsistencyMode.Strong, cancellationToken: cancellationToken);
+                bucket = await _client.GetStateAndETagAsync<Node>(_storeName, bucketKey, ConsistencyMode.Strong, cancellationToken: cancellationToken).ConfigureAwait(false);
             }
             catch (DaprException)
             {
@@ -449,7 +461,7 @@ namespace DistributedHashMap
 
             await DoRetry(
                 () => _client.TrySaveStateAsync(_storeName, bucketKey, bucket.node, bucket.etag, DefaultStateOptions,
-                    cancellationToken: cancellationToken), cancellationToken);
+                    cancellationToken: cancellationToken), cancellationToken).ConfigureAwait(false);
         }
     }
 }
