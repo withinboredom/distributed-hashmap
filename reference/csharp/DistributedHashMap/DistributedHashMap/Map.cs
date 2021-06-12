@@ -477,8 +477,8 @@ namespace DistributedHashMap
 
         public async IAsyncEnumerator<(string, T)> GetAsyncEnumerator(CancellationToken cancellationToken = new CancellationToken())
         {
-            var max = GetMapSize();
             await GetHeaderAndMaybeRebuild(cancellationToken);
+            var max = GetMapSize();
             for (var i = 0; i < max; i++)
             {
                 var node = await GetRaw(GetBucketKey(i), cancellationToken);
