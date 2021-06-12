@@ -14,18 +14,34 @@ namespace IntegrationTest
         public async Task<bool> Verify(string lang, string seed, DaprClient client)
         {
             Console.Write($"Verifying {lang}: ");
-            var map = new Map($"{lang}{seed}", "statestore", client);
+            var map = new Map<int>($"{lang}{seed}", "statestore", client);
             var stopwatch = new Stopwatch();
+            var seen = new List<int>();
             stopwatch.Start();
-            for (var i = 0; i < Constants.NumberMessages; i++)
+            await foreach (var (key, value) in map)
             {
-                var verification = await map.Get<int>($"{lang} {i}");
-                var contains = await map.Contains($"{lang} {i}");
-                if (verification == i && contains) continue;
+                if (seen.Contains(value))
+                {
+                    Console.WriteLine($"Read duplicate from {lang}: {value}");
+                    return false;
+                } 
+                seen.Add(value);
+                if (! await map.Contains(key))
+                {
+                    Console.WriteLine($"Expected {lang} to contain {key}, but it did not!");
+                    return false;
+                }
 
-                Console.WriteLine(
-                    $"Failed read verification for {lang}: got {verification} and expected {i}, {(contains ? "contained in map" : "not contained in map")}");
-                return false;
+                var result = await map.Get(key);
+                if (result != value)
+                {
+                    Console.WriteLine($"Expected {lang} to contain a value with {key}:{value:N0} but found {result:N0} instead");
+                }
+            }
+
+            if (seen.Count != Constants.NumberMessages)
+            {
+                Console.WriteLine($"Failed read verification for {lang}: got {seen.Count:N0} and expected {Constants.NumberMessages:N0}.");
             }
 
             stopwatch.Stop();
