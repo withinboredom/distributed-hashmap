@@ -49,7 +49,7 @@ namespace IntegrationTest
 
                         var result = Parallel.For(0, NumberMessages, new ParallelOptions
                         {
-                            MaxDegreeOfParallelism = 1
+                            MaxDegreeOfParallelism = 10
                         }, (int i, ParallelLoopState state) =>
                         {
                             var map = new Map("c#" + seed, "statestore", client);
