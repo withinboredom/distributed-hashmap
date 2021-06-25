@@ -4,8 +4,8 @@ namespace DistributedHashMap\Test;
 
 require_once __DIR__.'/../../vendor/autoload.php';
 
-if(function_exists('opcache_get_status')) {
-    if(opcache_get_status()['jit']['enabled'] ?? false) {
+if (function_exists('opcache_get_status')) {
+    if (opcache_get_status()['jit']['enabled'] ?? false) {
         echo "JIT enabled!\n";
     }
 }
@@ -94,9 +94,11 @@ switch ($argv[1]) {
             foreach (['c#', 'php'] as $lang) {
                 $lang_encoded = rawurlencode($lang);
                 $total        = number_format(NUMBER_MESSAGES, 0);
-                $stats        = json_decode(file_get_contents("http://localhost/stats/$lang_encoded"), true);
-                $created      = number_format($stats['createdCount'] ?? 0, 0);
-                $dupes        = number_format($stats['createdDupeCount'] ?? 0, 0);
+                $response     = $client->invokeMethod('GET', 'subs', "stats/$lang_encoded");
+                $stats        = $response->getBody()->getContents();
+                $stats        = json_decode($stats, true);
+                $created = number_format($stats['createdCount'] ?? 0, 0);
+                $dupes   = number_format($stats['createdDupeCount'] ?? 0, 0);
                 if ($created !== $total) {
                     echo "$lang broadcast $created events and expected $total\n";
                     $failed = true;
