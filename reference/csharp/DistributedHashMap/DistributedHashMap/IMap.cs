@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace DistributedHashMap
 {
-    interface IMap
+    interface IMap<T> : IAsyncEnumerable<(string, T)>
     {
         /// <summary>
         /// Put a value into the hashmap
@@ -16,7 +16,7 @@ namespace DistributedHashMap
         /// <param name="value">The item</param>
         /// <param name="cancel">A cancellation token</param>
         /// <returns></returns>
-        public Task Put<T>(string key, T value, CancellationToken cancel = default);
+        public Task Put(string key, T value, CancellationToken cancel = default);
 
         /// <summary>
         /// Get a value from the hashmap
@@ -25,7 +25,7 @@ namespace DistributedHashMap
         /// <param name="key">The key to get</param>
         /// <param name="cancellationToken">A cancellation token</param>
         /// <returns>The value for the given key</returns>
-        public Task<T> Get<T>(string key, CancellationToken cancellationToken = default);
+        public Task<T> Get(string key, CancellationToken cancellationToken = default);
 
         /// <summary>
         /// Whether the hashmap contains a given key

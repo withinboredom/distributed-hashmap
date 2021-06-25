@@ -3,7 +3,7 @@ services:
   redis:
     image: redis
   csharp-daprd:
-    image: daprio/daprd:1.2.0
+    image: daprio/daprd:1.2.2
     command: [ "./daprd","-app-id","tests","-placement-host-address","placement:50006","-components-path","/components" ]
     volumes:
       - ./components:/components
@@ -14,7 +14,7 @@ services:
     build:
       dockerfile: images/csharp.Dockerfile
       context: .
-    command: ["write","test"]
+    command: [ "write","test" ]
     network_mode: service:csharp-daprd
     depends_on:
       - csharp-daprd
@@ -23,13 +23,27 @@ services:
     build:
       dockerfile: images/csharp.Dockerfile
       context: .
-    command: ["read","test"]
+    command: [ "read","test" ]
     network_mode: service:csharp-daprd
     depends_on:
       - csharp-daprd
   php-daprd:
-    image: daprio/daprd:1.2.0
-    command: [ "./daprd","-app-id","tests","-placement-host-address","placement:50006","-components-path","/components","-app-port","80" ]
+    image: daprio/daprd:1.2.2
+    command: [ "./daprd","-app-id","tests","-placement-host-address","placement:50006","-components-path","/components" ]
+    volumes:
+      - ./components:/components
+    depends_on:
+      - redis
+  sub-listen-daprd:
+    image: daprio/daprd:1.2.2
+    command: [ "./daprd","-app-id","subs","-placement-host-address","placement:50006","-components-path","/components","-app-port","80" ]
+    volumes:
+      - ./components:/components
+    depends_on:
+      - redis
+  sub-validate-daprd:
+    image: daprio/daprd:1.2.2
+    command: [ "./daprd","-app-id","tests","-placement-host-address","placement:50006","-components-path","/components" ]
     volumes:
       - ./components:/components
     depends_on:
@@ -51,7 +65,7 @@ services:
       context: .
       target: final
     command: [ "validate" ]
-    network_mode: service:php-daprd
+    network_mode: service:sub-validate-daprd
     depends_on:
       - php-daprd
   php-reader:
@@ -60,7 +74,7 @@ services:
       dockerfile: images/php.Dockerfile
       context: .
       target: final
-    command: ["read","test"]
+    command: [ "read","test" ]
     network_mode: service:php-daprd
     depends_on:
       - php-daprd
@@ -78,6 +92,6 @@ services:
     build:
       dockerfile: images/subscriptions.Dockerfile
       context: .
-    network_mode: service:php-daprd
+    network_mode: service:sub-listen-daprd
     depends_on:
       - php-daprd
